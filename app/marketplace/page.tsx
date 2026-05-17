@@ -41,8 +41,8 @@ export default function MarketplacePage() {
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<User | null>(null);
   const [accessMap, setAccessMap] = useState<AccessMap>({});
-  const [purchasingId, setPurchasingId] = useState<string | null>(null);
-  const [txDigest, setTxDigest] = useState<string | null>(null);
+  const [processingId, setProcessingId] = useState<string | null>(null);
+  const [lastTxDigest, setLastTxDigest] = useState<string | null>(null);
   const [showDisabled, setShowDisabled] = useState(false);
 
   const fetchVideos = useCallback(async (includeDisabled = false) => {
@@ -52,9 +52,7 @@ export default function MarketplacePage() {
         : "/api/videos/list";
       const res = await fetch(url);
       const data = await res.json();
-      if (data.videos) {
-        setVideos(data.videos);
-      }
+      if (data.videos) setVideos(data.videos);
     } catch {
       toast.error("Failed to load videos");
     } finally {
@@ -89,67 +87,45 @@ export default function MarketplacePage() {
   useEffect(() => {
     fetch("/api/auth/session")
       .then((r) => r.json())
-      .then((data) => {
-        setUser(data.user || null);
-      })
+      .then((data) => setUser(data.user || null))
       .catch(() => {});
-
     fetchVideos();
   }, [fetchVideos]);
 
   useEffect(() => {
-    if (user && videos.length > 0) {
-      fetchAccess(videos.map((v) => v.videoId));
-    }
+    if (user && videos.length > 0) fetchAccess(videos.map((v) => v.videoId));
   }, [user, videos, fetchAccess]);
 
-  // When admin toggles showDisabled, refetch
   useEffect(() => {
-    if (user?.isAdmin) {
-      fetchVideos(showDisabled);
-    }
+    if (user?.isAdmin) fetchVideos(showDisabled);
   }, [showDisabled, user, fetchVideos]);
 
-  const handlePurchase = async (videoId: string) => {
+  /**
+   * Called by SlushPayButton (inside VideoCard) after the wallet signs.
+   * Records the payment on the backend and grants access.
+   */
+  const handlePaymentSuccess = async (videoId: string, txDigest: string) => {
     if (!user) {
-      toast.error("Please login to purchase access");
+      toast.error("Please login first");
       return;
     }
 
-    const video = videos.find((v) => v.videoId === videoId);
-    if (!video) return;
-
-    setPurchasingId(videoId);
-
+    setProcessingId(videoId);
     try {
-      let digest: string;
-      const isMockMode =
-        process.env.NODE_ENV === "development" ||
-        window.location.hostname === "localhost";
-
-      if (isMockMode) {
-        digest = `MOCK_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-        toast.info("Using mock payment (development mode)");
-      } else {
-        toast.error("Production payment requires Sui wallet integration. See README.");
-        setPurchasingId(null);
-        return;
-      }
-
       const res = await fetch("/api/payment/record", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoId, txDigest: digest }),
+        body: JSON.stringify({ videoId, txDigest }),
       });
 
       const data = await res.json();
 
       if (!res.ok) {
-        toast.error(data.error || "Payment failed");
+        toast.error(data.error || "Failed to record payment");
         return;
       }
 
-      setTxDigest(digest);
+      setLastTxDigest(txDigest);
       toast.success("Access granted! You can now watch the video.");
 
       setAccessMap((prev) => ({
@@ -163,14 +139,13 @@ export default function MarketplacePage() {
 
       fetchVideos(showDisabled);
     } catch {
-      toast.error("Purchase failed. Please try again.");
+      toast.error("Failed to record payment. Contact support with your tx digest.");
     } finally {
-      setPurchasingId(null);
+      setProcessingId(null);
     }
   };
 
   const handleDisableToggle = (videoId: string, disabled: boolean) => {
-    // Optimistically update local state
     setVideos((prev) =>
       prev.map((v) => (v.videoId === videoId ? { ...v, isDisabled: disabled } : v))
     );
@@ -184,7 +159,6 @@ export default function MarketplacePage() {
     return "none";
   };
 
-  // What the public sees vs what admin sees
   const visibleVideos = user?.isAdmin
     ? showDisabled
       ? videos
@@ -194,17 +168,16 @@ export default function MarketplacePage() {
   return (
     <div className="min-h-screen px-4 py-8">
       <div className="max-w-7xl mx-auto space-y-8">
+
         {/* Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold text-white">Marketplace</h1>
             <p className="text-gray-400 mt-1">
-              Encrypted video access — pay SUI, watch instantly
+              Pay with Slush wallet — get time-limited access instantly
             </p>
           </div>
-
           <div className="flex items-center gap-3">
-            {/* Admin: toggle show disabled */}
             {user?.isAdmin && (
               <button
                 onClick={() => setShowDisabled((v) => !v)}
@@ -217,7 +190,6 @@ export default function MarketplacePage() {
                 {showDisabled ? "Hiding disabled" : "Show disabled"}
               </button>
             )}
-
             {!user && (
               <Link
                 href="/login"
@@ -237,20 +209,20 @@ export default function MarketplacePage() {
           </div>
         )}
 
-        {/* Transaction digest notification */}
-        {txDigest && (
+        {/* Last tx digest */}
+        {lastTxDigest && (
           <div className="glass-card rounded-xl p-4 flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <span className="text-green-400">✓</span>
               <div>
-                <p className="text-sm text-white">Payment recorded</p>
+                <p className="text-sm text-white">Payment recorded on Sui testnet</p>
                 <code className="text-xs text-gray-400 font-mono">
-                  {txDigest.slice(0, 40)}...
+                  {lastTxDigest.slice(0, 44)}...
                 </code>
               </div>
             </div>
             <button
-              onClick={() => setTxDigest(null)}
+              onClick={() => setLastTxDigest(null)}
               className="text-gray-500 hover:text-white transition-colors"
             >
               ✕
@@ -270,9 +242,7 @@ export default function MarketplacePage() {
           <div className="text-center py-20 space-y-4">
             <div className="text-5xl">🎬</div>
             <h2 className="text-2xl font-semibold text-white">No videos yet</h2>
-            <p className="text-gray-400">
-              Be the first to create an encrypted video listing
-            </p>
+            <p className="text-gray-400">Be the first to create an encrypted video listing</p>
             <Link
               href="/create"
               className="inline-flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-purple-600 to-blue-600 text-white text-sm font-medium rounded-xl hover:from-purple-500 hover:to-blue-500 transition-all"
@@ -282,7 +252,6 @@ export default function MarketplacePage() {
           </div>
         ) : (
           <>
-            {/* Stats bar */}
             <div className="flex items-center gap-4 text-sm text-gray-400">
               <span>
                 {visibleVideos.length} video{visibleVideos.length !== 1 ? "s" : ""} available
@@ -299,7 +268,6 @@ export default function MarketplacePage() {
               )}
             </div>
 
-            {/* Video grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
               {visibleVideos.map((video) => (
                 <VideoCard
@@ -316,8 +284,10 @@ export default function MarketplacePage() {
                   thumbnailUrl={video.thumbnailUrl}
                   accessStatus={getAccessStatus(video.videoId)}
                   expiresAt={accessMap[video.videoId]?.expiresAt}
-                  onPurchase={user && !video.isDisabled ? handlePurchase : undefined}
-                  isPurchasing={purchasingId === video.videoId}
+                  onPaymentSuccess={
+                    user && !video.isDisabled ? handlePaymentSuccess : undefined
+                  }
+                  isPurchasing={processingId === video.videoId}
                   isAdmin={user?.isAdmin}
                   onDisableToggle={handleDisableToggle}
                 />
@@ -328,8 +298,7 @@ export default function MarketplacePage() {
 
         {!loading && visibleVideos.length > 0 && (
           <div className="text-center text-xs text-gray-600 pt-4 border-t border-white/5">
-            All video metadata stored on Pinata IPFS • Payments on Sui Testnet
-            • Revenue cap: $20 USD per video
+            Payments via Slush wallet on Sui Testnet • Metadata on Pinata IPFS • Revenue cap $20 USD
           </div>
         )}
       </div>

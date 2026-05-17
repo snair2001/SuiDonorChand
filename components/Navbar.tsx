@@ -4,10 +4,12 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { LoadingSpinner } from "./LoadingSpinner";
+import { SlushWalletBar } from "./SlushWalletBar";
 
 interface User {
   email: string;
   suiAddress: string;
+  isAdmin?: boolean;
 }
 
 export function Navbar() {
@@ -92,6 +94,9 @@ export function Navbar() {
 
           {/* Auth */}
           <div className="flex items-center gap-3">
+            {/* Slush wallet connection */}
+            <SlushWalletBar />
+
             {loading ? (
               <LoadingSpinner size="sm" />
             ) : user ? (

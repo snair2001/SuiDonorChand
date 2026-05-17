@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { formatSui } from "@/lib/pricing";
 import { toast } from "sonner";
+import { SlushPayButton } from "./SlushPayButton";
 
 interface VideoCardProps {
   videoId: string;
@@ -18,7 +19,8 @@ interface VideoCardProps {
   thumbnailUrl?: string;
   accessStatus?: "none" | "active" | "expired";
   expiresAt?: string | null;
-  onPurchase?: (videoId: string) => void;
+  /** Called with txDigest after Slush wallet payment succeeds */
+  onPaymentSuccess?: (videoId: string, txDigest: string) => void;
   isPurchasing?: boolean;
   // Admin props
   isAdmin?: boolean;
@@ -38,7 +40,7 @@ export function VideoCard({
   thumbnailUrl,
   accessStatus = "none",
   expiresAt,
-  onPurchase,
+  onPaymentSuccess,
   isPurchasing = false,
   isAdmin = false,
   onDisableToggle,
@@ -132,14 +134,13 @@ export function VideoCard({
           <div className="w-full text-center px-4 py-2 text-xs text-orange-400 bg-orange-500/10 border border-orange-500/20 rounded-lg">
             Access Expired
           </div>
-          {!isSoldOut && onPurchase && (
-            <button
-              onClick={() => onPurchase(videoId)}
-              disabled={isPurchasing}
-              className="w-full px-4 py-2 text-sm text-purple-300 border border-purple-500/30 hover:border-purple-500/60 rounded-lg transition-all disabled:opacity-50"
-            >
-              Renew Access
-            </button>
+          {!isSoldOut && onPaymentSuccess && (
+            <SlushPayButton
+              videoId={videoId}
+              priceMist={priceMist}
+              creatorAddress={creatorAddress}
+              onSuccess={(digest) => onPaymentSuccess(videoId, digest)}
+            />
           )}
         </div>
       );
@@ -153,25 +154,15 @@ export function VideoCard({
       );
     }
 
-    if (onPurchase) {
+    if (onPaymentSuccess) {
       return (
-        <button
-          onClick={() => onPurchase(videoId)}
+        <SlushPayButton
+          videoId={videoId}
+          priceMist={priceMist}
+          creatorAddress={creatorAddress}
+          onSuccess={(digest) => onPaymentSuccess(videoId, digest)}
           disabled={isPurchasing}
-          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white text-sm font-medium rounded-lg transition-all disabled:opacity-70 disabled:cursor-not-allowed"
-        >
-          {isPurchasing ? (
-            <>
-              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              Processing...
-            </>
-          ) : (
-            <>
-              <span>🔓</span>
-              Pay {formatSui(priceMist)} SUI
-            </>
-          )}
-        </button>
+        />
       );
     }
 
