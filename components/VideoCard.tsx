@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { formatSui } from "@/lib/pricing";
+import { toast } from "sonner";
 
 interface VideoCardProps {
   videoId: string;
@@ -11,6 +12,7 @@ interface VideoCardProps {
   priceMist: string;
   durationMs: number;
   isSoldOut: boolean;
+  isDisabled: boolean;
   status: string;
   createdAt: string;
   thumbnailUrl?: string;
@@ -18,6 +20,9 @@ interface VideoCardProps {
   expiresAt?: string | null;
   onPurchase?: (videoId: string) => void;
   isPurchasing?: boolean;
+  // Admin props
+  isAdmin?: boolean;
+  onDisableToggle?: (videoId: string, disable: boolean) => void;
 }
 
 export function VideoCard({
@@ -27,6 +32,7 @@ export function VideoCard({
   priceMist,
   durationMs,
   isSoldOut,
+  isDisabled,
   status,
   createdAt,
   thumbnailUrl,
@@ -34,8 +40,13 @@ export function VideoCard({
   expiresAt,
   onPurchase,
   isPurchasing = false,
+  isAdmin = false,
+  onDisableToggle,
 }: VideoCardProps) {
   const [imgError, setImgError] = useState(false);
+  const [disabling, setDisabling] = useState(false);
+  const [showReasonInput, setShowReasonInput] = useState(false);
+  const [reason, setReason] = useState("");
 
   const formatAddress = (addr: string) =>
     `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -47,13 +58,12 @@ export function VideoCard({
     return `${days}d access`;
   };
 
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString("en-US", {
+  const formatDate = (dateStr: string) =>
+    new Date(dateStr).toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
       year: "numeric",
     });
-  };
 
   const formatExpiry = (expiryStr: string) => {
     const expiry = new Date(expiryStr);
@@ -61,14 +71,49 @@ export function VideoCard({
     const diffMs = expiry.getTime() - now.getTime();
     const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
     const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-
     if (diffMs <= 0) return "Expired";
     if (diffHours > 24) return `${Math.floor(diffHours / 24)}d remaining`;
     if (diffHours > 0) return `${diffHours}h ${diffMins}m remaining`;
     return `${diffMins}m remaining`;
   };
 
+  const handleDisableToggle = async (disable: boolean) => {
+    if (disable && !reason.trim()) {
+      setShowReasonInput(true);
+      return;
+    }
+    setDisabling(true);
+    try {
+      const res = await fetch(`/api/admin/videos/${videoId}/disable`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ disable, reason: reason.trim() || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Failed to update campaign");
+        return;
+      }
+      toast.success(data.message);
+      setShowReasonInput(false);
+      setReason("");
+      onDisableToggle?.(videoId, disable);
+    } catch {
+      toast.error("Network error");
+    } finally {
+      setDisabling(false);
+    }
+  };
+
   const getActionButton = () => {
+    if (isDisabled) {
+      return (
+        <div className="w-full text-center px-4 py-2.5 text-sm text-gray-400 bg-gray-500/10 border border-gray-500/20 rounded-lg">
+          🚫 Disabled by Admin
+        </div>
+      );
+    }
+
     if (accessStatus === "active" && expiresAt) {
       return (
         <Link
@@ -132,7 +177,7 @@ export function VideoCard({
 
     return (
       <Link
-        href={`/marketplace`}
+        href="/marketplace"
         className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white text-sm font-medium rounded-lg transition-all"
       >
         View in Marketplace
@@ -141,7 +186,13 @@ export function VideoCard({
   };
 
   return (
-    <div className="glass-card rounded-xl overflow-hidden group hover:border-purple-500/30 transition-all duration-300">
+    <div
+      className={`glass-card rounded-xl overflow-hidden group transition-all duration-300 ${
+        isDisabled
+          ? "opacity-60 border-gray-500/20"
+          : "hover:border-purple-500/30"
+      }`}
+    >
       {/* Thumbnail */}
       <div className="relative aspect-video bg-gradient-to-br from-purple-900/50 to-blue-900/50 overflow-hidden">
         {thumbnailUrl && !imgError ? (
@@ -159,7 +210,12 @@ export function VideoCard({
 
         {/* Overlay badges */}
         <div className="absolute top-2 right-2 flex gap-1">
-          {isSoldOut && (
+          {isDisabled && (
+            <span className="px-2 py-0.5 text-xs bg-gray-700/90 text-gray-300 rounded-full backdrop-blur-sm">
+              Disabled
+            </span>
+          )}
+          {isSoldOut && !isDisabled && (
             <span className="px-2 py-0.5 text-xs bg-red-500/80 text-white rounded-full backdrop-blur-sm">
               Sold Out
             </span>
@@ -198,7 +254,7 @@ export function VideoCard({
           <span>{formatDate(createdAt)}</span>
         </div>
 
-        {/* Expiry countdown for active access */}
+        {/* Expiry countdown */}
         {accessStatus === "active" && expiresAt && (
           <div className="text-xs text-green-400 bg-green-500/10 border border-green-500/20 rounded-lg px-2 py-1 text-center">
             ⏱ {formatExpiry(expiresAt)}
@@ -207,6 +263,63 @@ export function VideoCard({
 
         {/* Action button */}
         {getActionButton()}
+
+        {/* ── Admin disable/enable section ─────────────────────────────── */}
+        {isAdmin && (
+          <div className="pt-2 border-t border-white/10 space-y-2">
+            {showReasonInput && !isDisabled ? (
+              <div className="space-y-2">
+                <input
+                  type="text"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="Reason for disabling (optional)"
+                  className="w-full px-3 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-red-500/50"
+                  maxLength={200}
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleDisableToggle(true)}
+                    disabled={disabling}
+                    className="flex-1 px-3 py-1.5 text-xs bg-red-600/80 hover:bg-red-600 text-white rounded-lg transition-all disabled:opacity-50"
+                  >
+                    {disabling ? "Disabling..." : "Confirm Disable"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowReasonInput(false);
+                      setReason("");
+                    }}
+                    className="px-3 py-1.5 text-xs border border-white/10 text-gray-400 hover:text-white rounded-lg transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() =>
+                  isDisabled
+                    ? handleDisableToggle(false)
+                    : handleDisableToggle(true)
+                }
+                disabled={disabling}
+                className={`w-full px-3 py-1.5 text-xs font-medium rounded-lg transition-all disabled:opacity-50 ${
+                  isDisabled
+                    ? "bg-green-600/20 hover:bg-green-600/40 text-green-400 border border-green-500/30"
+                    : "bg-red-600/20 hover:bg-red-600/40 text-red-400 border border-red-500/30"
+                }`}
+              >
+                {disabling
+                  ? "Updating..."
+                  : isDisabled
+                  ? "🟢 Re-enable Campaign"
+                  : "🔴 Disable Campaign"}
+              </button>
+            )}
+            <p className="text-xs text-gray-600 text-center">Admin only</p>
+          </div>
+        )}
       </div>
     </div>
   );

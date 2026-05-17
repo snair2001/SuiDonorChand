@@ -65,6 +65,13 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      if (metadata.isDisabled) {
+        return NextResponse.json(
+          { error: "This campaign has been disabled by the platform admin" },
+          { status: 403 }
+        );
+      }
+
       // Calculate payment amounts (server-side only)
       const paymentAmountMist = BigInt(metadata.priceMist);
       const paymentAmountUsd = await mistToUsd(paymentAmountMist);

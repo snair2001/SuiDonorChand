@@ -11,6 +11,7 @@ import { LoadingPage, LoadingSpinner } from "@/components/LoadingSpinner";
 interface User {
   email: string;
   suiAddress: string;
+  isAdmin: boolean;
 }
 
 interface Video {
@@ -29,6 +30,7 @@ interface Video {
   totalPlatformRevenueUsd: number;
   purchaseCount: number;
   isSoldOut: boolean;
+  isDisabled: boolean;
   status: string;
   createdAt: string;
   thumbnailUrl?: string;
@@ -101,6 +103,11 @@ export default function DashboardPage() {
             <p className="text-gray-400 mt-1">
               Manage your encrypted video listings
             </p>
+            {user.isAdmin && (
+              <span className="inline-flex items-center gap-1 mt-2 px-2 py-0.5 text-xs bg-yellow-500/20 border border-yellow-500/30 text-yellow-300 rounded-full">
+                🛡️ Platform Admin
+              </span>
+            )}
           </div>
           <Link
             href="/create"
@@ -216,14 +223,16 @@ export default function DashboardPage() {
                           <div className="flex items-center gap-3 mt-1">
                             <span
                               className={`text-xs px-2 py-0.5 rounded-full ${
-                                video.status === "active"
+                                video.isDisabled
+                                  ? "bg-gray-500/20 text-gray-400"
+                                  : video.status === "active"
                                   ? "bg-green-500/20 text-green-400"
                                   : video.status === "sold_out"
                                   ? "bg-red-500/20 text-red-400"
                                   : "bg-gray-500/20 text-gray-400"
                               }`}
                             >
-                              {video.status}
+                              {video.isDisabled ? "disabled by admin" : video.status}
                             </span>
                             <span className="text-xs text-gray-500">
                               {video.purchaseCount} sales

@@ -32,6 +32,9 @@ export interface VideoMetadata {
   totalPlatformRevenueUsd: number;
   purchaseCount: number;
   isSoldOut: boolean;
+  isDisabled: boolean;
+  disabledReason: string | null;
+  disabledAt: string | null;
   status: "active" | "sold_out" | "removed";
   removedReason: string | null;
   removedAt: string | null;
@@ -43,11 +46,13 @@ export interface RegistryEntry {
   videoId: string;
   cid: string;
   title: string;
+  creatorEmail: string;
   creatorAddress: string;
   priceMist: string;
   durationMs: number;
   status: "active" | "sold_out" | "removed";
   isSoldOut: boolean;
+  isDisabled: boolean;
   createdAt: string;
   thumbnailVideoId?: string;
 }
@@ -334,6 +339,25 @@ export async function findAnyAccess(
   } catch {
     return null;
   }
+}
+
+/**
+ * Find any active (non-disabled, non-sold-out) video by creator email
+ * Used to enforce one-campaign-per-email rule
+ */
+export async function getActiveVideoByCreatorEmail(
+  creatorEmail: string
+): Promise<RegistryEntry | null> {
+  const registry = await getLatestRegistry();
+  return (
+    registry.videos.find(
+      (v) =>
+        v.creatorEmail?.toLowerCase() === creatorEmail.toLowerCase() &&
+        v.status === "active" &&
+        !v.isSoldOut &&
+        !v.isDisabled
+    ) ?? null
+  );
 }
 
 // ─── Purchase Record Functions ────────────────────────────────────────────────

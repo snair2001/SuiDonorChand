@@ -16,6 +16,7 @@ interface Video {
   priceSui: string;
   durationMs: number;
   isSoldOut: boolean;
+  isDisabled: boolean;
   status: string;
   createdAt: string;
   thumbnailUrl?: string;
@@ -32,6 +33,7 @@ interface AccessMap {
 interface User {
   email: string;
   suiAddress: string;
+  isAdmin: boolean;
 }
 
 export default function MarketplacePage() {
@@ -41,10 +43,14 @@ export default function MarketplacePage() {
   const [accessMap, setAccessMap] = useState<AccessMap>({});
   const [purchasingId, setPurchasingId] = useState<string | null>(null);
   const [txDigest, setTxDigest] = useState<string | null>(null);
+  const [showDisabled, setShowDisabled] = useState(false);
 
-  const fetchVideos = useCallback(async () => {
+  const fetchVideos = useCallback(async (includeDisabled = false) => {
     try {
-      const res = await fetch("/api/videos/list");
+      const url = includeDisabled
+        ? "/api/videos/list?includeDisabled=true"
+        : "/api/videos/list";
+      const res = await fetch(url);
       const data = await res.json();
       if (data.videos) {
         setVideos(data.videos);
@@ -71,11 +77,7 @@ export default function MarketplacePage() {
               isExpired: data.isExpired || false,
             };
           } catch {
-            results[videoId] = {
-              hasAccess: false,
-              expiresAt: null,
-              isExpired: false,
-            };
+            results[videoId] = { hasAccess: false, expiresAt: null, isExpired: false };
           }
         })
       );
@@ -85,7 +87,6 @@ export default function MarketplacePage() {
   );
 
   useEffect(() => {
-    // Check auth
     fetch("/api/auth/session")
       .then((r) => r.json())
       .then((data) => {
@@ -102,6 +103,13 @@ export default function MarketplacePage() {
     }
   }, [user, videos, fetchAccess]);
 
+  // When admin toggles showDisabled, refetch
+  useEffect(() => {
+    if (user?.isAdmin) {
+      fetchVideos(showDisabled);
+    }
+  }, [showDisabled, user, fetchVideos]);
+
   const handlePurchase = async (videoId: string) => {
     if (!user) {
       toast.error("Please login to purchase access");
@@ -114,29 +122,20 @@ export default function MarketplacePage() {
     setPurchasingId(videoId);
 
     try {
-      // In development with ALLOW_MOCK_PAYMENT=true, use mock transaction
-      // In production, this would use the Sui wallet SDK to sign a real transaction
       let digest: string;
-
       const isMockMode =
         process.env.NODE_ENV === "development" ||
         window.location.hostname === "localhost";
 
       if (isMockMode) {
-        // Mock payment for development
         digest = `MOCK_${Date.now()}_${Math.random().toString(36).slice(2)}`;
         toast.info("Using mock payment (development mode)");
       } else {
-        // Production: Use Sui wallet to sign transaction
-        // This requires the user to have a Sui wallet extension or zkLogin signing
-        toast.error(
-          "Production payment requires Sui wallet integration. See README for setup."
-        );
+        toast.error("Production payment requires Sui wallet integration. See README.");
         setPurchasingId(null);
         return;
       }
 
-      // Record payment on backend
       const res = await fetch("/api/payment/record", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -153,7 +152,6 @@ export default function MarketplacePage() {
       setTxDigest(digest);
       toast.success("Access granted! You can now watch the video.");
 
-      // Update access map
       setAccessMap((prev) => ({
         ...prev,
         [videoId]: {
@@ -163,8 +161,7 @@ export default function MarketplacePage() {
         },
       }));
 
-      // Refresh videos to get updated revenue
-      fetchVideos();
+      fetchVideos(showDisabled);
     } catch {
       toast.error("Purchase failed. Please try again.");
     } finally {
@@ -172,15 +169,27 @@ export default function MarketplacePage() {
     }
   };
 
-  const getAccessStatus = (
-    videoId: string
-  ): "none" | "active" | "expired" => {
+  const handleDisableToggle = (videoId: string, disabled: boolean) => {
+    // Optimistically update local state
+    setVideos((prev) =>
+      prev.map((v) => (v.videoId === videoId ? { ...v, isDisabled: disabled } : v))
+    );
+  };
+
+  const getAccessStatus = (videoId: string): "none" | "active" | "expired" => {
     const access = accessMap[videoId];
     if (!access) return "none";
     if (access.hasAccess) return "active";
     if (access.isExpired) return "expired";
     return "none";
   };
+
+  // What the public sees vs what admin sees
+  const visibleVideos = user?.isAdmin
+    ? showDisabled
+      ? videos
+      : videos.filter((v) => !v.isDisabled)
+    : videos.filter((v) => !v.isDisabled);
 
   return (
     <div className="min-h-screen px-4 py-8">
@@ -194,15 +203,39 @@ export default function MarketplacePage() {
             </p>
           </div>
 
-          {!user && (
-            <Link
-              href="/login"
-              className="px-5 py-2.5 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white text-sm font-medium rounded-xl transition-all"
-            >
-              Login to Purchase
-            </Link>
-          )}
+          <div className="flex items-center gap-3">
+            {/* Admin: toggle show disabled */}
+            {user?.isAdmin && (
+              <button
+                onClick={() => setShowDisabled((v) => !v)}
+                className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${
+                  showDisabled
+                    ? "bg-red-500/20 border-red-500/40 text-red-300"
+                    : "bg-white/5 border-white/10 text-gray-400 hover:text-white"
+                }`}
+              >
+                {showDisabled ? "Hiding disabled" : "Show disabled"}
+              </button>
+            )}
+
+            {!user && (
+              <Link
+                href="/login"
+                className="px-5 py-2.5 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white text-sm font-medium rounded-xl transition-all"
+              >
+                Login to Purchase
+              </Link>
+            )}
+          </div>
         </div>
+
+        {/* Admin badge */}
+        {user?.isAdmin && (
+          <div className="flex items-center gap-2 px-4 py-2 bg-yellow-500/10 border border-yellow-500/20 rounded-xl text-sm text-yellow-300">
+            <span>🛡️</span>
+            <span>Admin view — disable buttons are visible only to you</span>
+          </div>
+        )}
 
         {/* Transaction digest notification */}
         {txDigest && (
@@ -230,17 +263,13 @@ export default function MarketplacePage() {
           <div className="flex items-center justify-center py-20">
             <div className="text-center space-y-4">
               <LoadingSpinner size="lg" />
-              <p className="text-gray-400 text-sm">
-                Loading from Pinata IPFS...
-              </p>
+              <p className="text-gray-400 text-sm">Loading from Pinata IPFS...</p>
             </div>
           </div>
-        ) : videos.length === 0 ? (
+        ) : visibleVideos.length === 0 ? (
           <div className="text-center py-20 space-y-4">
             <div className="text-5xl">🎬</div>
-            <h2 className="text-2xl font-semibold text-white">
-              No videos yet
-            </h2>
+            <h2 className="text-2xl font-semibold text-white">No videos yet</h2>
             <p className="text-gray-400">
               Be the first to create an encrypted video listing
             </p>
@@ -255,20 +284,24 @@ export default function MarketplacePage() {
           <>
             {/* Stats bar */}
             <div className="flex items-center gap-4 text-sm text-gray-400">
-              <span>{videos.length} video{videos.length !== 1 ? "s" : ""} available</span>
+              <span>
+                {visibleVideos.length} video{visibleVideos.length !== 1 ? "s" : ""} available
+              </span>
               {user && (
                 <span className="text-purple-400">
-                  {
-                    Object.values(accessMap).filter((a) => a.hasAccess).length
-                  }{" "}
-                  active access
+                  {Object.values(accessMap).filter((a) => a.hasAccess).length} active access
+                </span>
+              )}
+              {user?.isAdmin && showDisabled && (
+                <span className="text-red-400">
+                  {videos.filter((v) => v.isDisabled).length} disabled
                 </span>
               )}
             </div>
 
             {/* Video grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {videos.map((video) => (
+              {visibleVideos.map((video) => (
                 <VideoCard
                   key={video.videoId}
                   videoId={video.videoId}
@@ -277,21 +310,23 @@ export default function MarketplacePage() {
                   priceMist={video.priceMist}
                   durationMs={video.durationMs}
                   isSoldOut={video.isSoldOut}
+                  isDisabled={video.isDisabled}
                   status={video.status}
                   createdAt={video.createdAt}
                   thumbnailUrl={video.thumbnailUrl}
                   accessStatus={getAccessStatus(video.videoId)}
                   expiresAt={accessMap[video.videoId]?.expiresAt}
-                  onPurchase={user ? handlePurchase : undefined}
+                  onPurchase={user && !video.isDisabled ? handlePurchase : undefined}
                   isPurchasing={purchasingId === video.videoId}
+                  isAdmin={user?.isAdmin}
+                  onDisableToggle={handleDisableToggle}
                 />
               ))}
             </div>
           </>
         )}
 
-        {/* Info footer */}
-        {!loading && videos.length > 0 && (
+        {!loading && visibleVideos.length > 0 && (
           <div className="text-center text-xs text-gray-600 pt-4 border-t border-white/5">
             All video metadata stored on Pinata IPFS • Payments on Sui Testnet
             • Revenue cap: $20 USD per video

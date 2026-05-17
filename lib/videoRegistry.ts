@@ -8,6 +8,7 @@ import {
   getVideoMetadata,
   updateVideoRegistry,
   uploadJsonToPinata,
+  getActiveVideoByCreatorEmail,
   VideoMetadata,
   RegistryEntry,
 } from "./pinata";
@@ -31,6 +32,7 @@ export interface SafeVideoMetadata {
   title: string;
   description: string;
   creatorAddress: string;
+  creatorEmail: string;
   priceMist: string;
   priceSui: string;
   durationMs: number;
@@ -41,18 +43,32 @@ export interface SafeVideoMetadata {
   totalPlatformRevenueUsd: number;
   purchaseCount: number;
   isSoldOut: boolean;
+  isDisabled: boolean;
+  disabledReason: string | null;
+  disabledAt: string | null;
   status: string;
   createdAt: string;
   thumbnailUrl?: string;
 }
 
 /**
- * Create a new video with encrypted metadata
+ * Create a new video with encrypted metadata.
+ * Enforces one active campaign per creator email.
  */
 export async function createVideo(
   params: CreateVideoParams
 ): Promise<SafeVideoMetadata> {
   const { v4: uuidv4 } = await import("uuid");
+
+  // ── One campaign per email enforcement ──────────────────────────────────────
+  const existing = await getActiveVideoByCreatorEmail(params.creatorEmail);
+  if (existing) {
+    throw new Error(
+      `You already have an active campaign ("${existing.title}"). ` +
+        `Only one active campaign is allowed per account. ` +
+        `Wait for it to sell out or contact support to remove it.`
+    );
+  }
 
   // Validate YouTube URL
   const ytValidation = validateYouTubeUrl(params.youtubeUrl);
@@ -66,12 +82,7 @@ export async function createVideo(
   const videoId = uuidv4();
   const priceMist = suiToMist(params.priceSui);
   const durationMs = params.durationHours * 60 * 60 * 1000;
-  const revenueCapUsd = parseFloat(
-    process.env.VIDEO_REVENUE_CAP_USD || "20"
-  );
-  const platformFeePercentage = parseFloat(
-    process.env.PLATFORM_FEE_PERCENTAGE || "10"
-  );
+  const revenueCapUsd = parseFloat(process.env.VIDEO_REVENUE_CAP_USD || "20");
 
   const metadata: VideoMetadata = {
     videoId,
@@ -91,6 +102,9 @@ export async function createVideo(
     totalPlatformRevenueUsd: 0,
     purchaseCount: 0,
     isSoldOut: false,
+    isDisabled: false,
+    disabledReason: null,
+    disabledAt: null,
     status: "active",
     removedReason: null,
     removedAt: null,
@@ -106,11 +120,13 @@ export async function createVideo(
     videoId,
     cid,
     title: metadata.title,
+    creatorEmail: metadata.creatorEmail,
     creatorAddress: metadata.creatorAddress,
     priceMist: metadata.priceMist,
     durationMs: metadata.durationMs,
     status: "active",
     isSoldOut: false,
+    isDisabled: false,
     createdAt: metadata.createdAt,
     thumbnailVideoId: ytValidation.videoId,
   };
@@ -123,6 +139,7 @@ export async function createVideo(
     title: metadata.title,
     description: metadata.description,
     creatorAddress: metadata.creatorAddress,
+    creatorEmail: metadata.creatorEmail,
     priceMist: metadata.priceMist,
     priceSui: metadata.priceSui,
     durationMs: metadata.durationMs,
@@ -133,6 +150,9 @@ export async function createVideo(
     totalPlatformRevenueUsd: 0,
     purchaseCount: 0,
     isSoldOut: false,
+    isDisabled: false,
+    disabledReason: null,
+    disabledAt: null,
     status: "active",
     createdAt: metadata.createdAt,
     thumbnailUrl: getThumbnailUrl(ytValidation.videoId),
@@ -159,6 +179,7 @@ export async function getSafeVideoMetadata(
     title: metadata.title,
     description: metadata.description,
     creatorAddress: metadata.creatorAddress,
+    creatorEmail: metadata.creatorEmail,
     priceMist: metadata.priceMist,
     priceSui: metadata.priceSui,
     durationMs: metadata.durationMs,
@@ -169,6 +190,9 @@ export async function getSafeVideoMetadata(
     totalPlatformRevenueUsd: metadata.totalPlatformRevenueUsd,
     purchaseCount: metadata.purchaseCount,
     isSoldOut: metadata.isSoldOut,
+    isDisabled: metadata.isDisabled ?? false,
+    disabledReason: metadata.disabledReason ?? null,
+    disabledAt: metadata.disabledAt ?? null,
     status: metadata.status,
     createdAt: metadata.createdAt,
     thumbnailUrl,
@@ -176,20 +200,21 @@ export async function getSafeVideoMetadata(
 }
 
 /**
- * Get all active videos from registry (safe metadata only)
+ * Get all active, non-disabled videos from registry (safe metadata only)
  */
 export async function getActiveVideos(): Promise<SafeVideoMetadata[]> {
   const registry = await getLatestRegistry();
   const activeEntries = registry.videos.filter(
-    (v) => v.status === "active" && !v.isSoldOut
+    (v) => v.status === "active" && !v.isSoldOut && !v.isDisabled
   );
 
-  const videos: SafeVideoMetadata[] = activeEntries.map((entry) => ({
+  return activeEntries.map((entry) => ({
     videoId: entry.videoId,
     cid: entry.cid,
     title: entry.title,
     description: "",
     creatorAddress: entry.creatorAddress,
+    creatorEmail: entry.creatorEmail ?? "",
     priceMist: entry.priceMist,
     priceSui: mistToSui(BigInt(entry.priceMist)).toString(),
     durationMs: entry.durationMs,
@@ -200,18 +225,19 @@ export async function getActiveVideos(): Promise<SafeVideoMetadata[]> {
     totalPlatformRevenueUsd: 0,
     purchaseCount: 0,
     isSoldOut: entry.isSoldOut,
+    isDisabled: entry.isDisabled ?? false,
+    disabledReason: null,
+    disabledAt: null,
     status: entry.status,
     createdAt: entry.createdAt,
     thumbnailUrl: entry.thumbnailVideoId
       ? getThumbnailUrl(entry.thumbnailVideoId)
       : undefined,
   }));
-
-  return videos;
 }
 
 /**
- * Get all videos by creator address
+ * Get ALL videos by creator address (including disabled/sold-out) for dashboard
  */
 export async function getCreatorVideos(
   creatorAddress: string
@@ -227,6 +253,7 @@ export async function getCreatorVideos(
     title: entry.title,
     description: "",
     creatorAddress: entry.creatorAddress,
+    creatorEmail: entry.creatorEmail ?? "",
     priceMist: entry.priceMist,
     priceSui: mistToSui(BigInt(entry.priceMist)).toString(),
     durationMs: entry.durationMs,
@@ -237,6 +264,9 @@ export async function getCreatorVideos(
     totalPlatformRevenueUsd: 0,
     purchaseCount: 0,
     isSoldOut: entry.isSoldOut,
+    isDisabled: entry.isDisabled ?? false,
+    disabledReason: null,
+    disabledAt: null,
     status: entry.status,
     createdAt: entry.createdAt,
     thumbnailUrl: entry.thumbnailVideoId

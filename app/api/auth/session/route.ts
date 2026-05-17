@@ -13,10 +13,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ user: null }, { status: 200 });
   }
 
+  const adminEmail = process.env.ADMIN_EMAIL?.toLowerCase();
+  const isAdmin = !!adminEmail && user.email.toLowerCase() === adminEmail;
+
   return NextResponse.json({
     user: {
       email: user.email,
       suiAddress: user.suiAddress,
+      isAdmin,
     },
   });
 }
