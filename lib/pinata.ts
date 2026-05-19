@@ -359,6 +359,22 @@ export async function findAnyAccess(
 }
 
 /**
+ * Find ANY video by creator email (any status — active, sold_out, removed, disabled)
+ * Used to enforce one-video-per-account rule.
+ */
+export async function getAnyVideoByCreatorEmail(
+  creatorEmail: string
+): Promise<RegistryEntry | null> {
+  const registry = await getLatestRegistry();
+  const videos = Array.isArray(registry.videos) ? registry.videos : [];
+  return (
+    videos.find(
+      (v) => v.creatorEmail?.toLowerCase() === creatorEmail.toLowerCase()
+    ) ?? null
+  );
+}
+
+/**
  * Find any active (non-disabled, non-sold-out) video by creator email
  * Used to enforce one-campaign-per-email rule
  */

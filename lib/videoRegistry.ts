@@ -8,7 +8,7 @@ import {
   getVideoMetadata,
   updateVideoRegistry,
   uploadJsonToPinata,
-  getActiveVideoByCreatorEmail,
+  getAnyVideoByCreatorEmail,
   VideoMetadata,
   RegistryEntry,
 } from "./pinata";
@@ -60,13 +60,12 @@ export async function createVideo(
 ): Promise<SafeVideoMetadata> {
   const { v4: uuidv4 } = await import("uuid");
 
-  // ── One campaign per email enforcement ──────────────────────────────────────
-  const existing = await getActiveVideoByCreatorEmail(params.creatorEmail);
+  // ── One video per account (lifetime) ───────────────────────────────────────
+  const existing = await getAnyVideoByCreatorEmail(params.creatorEmail);
   if (existing) {
     throw new Error(
-      `You already have an active campaign ("${existing.title}"). ` +
-        `Only one active campaign is allowed per account. ` +
-        `Wait for it to sell out or contact support to remove it.`
+      `Your account already has a video ("${existing.title}"). ` +
+        `Only one video is allowed per account.`
     );
   }
 
