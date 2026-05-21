@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { LoadingSpinner } from "./LoadingSpinner";
-import { SlushWalletBar } from "./SlushWalletBar";
 
 interface User {
   email: string;
@@ -62,10 +61,8 @@ export function Navbar() {
           )}
         </div>
 
-        {/* Right side */}
+        {/* Right side — only zkLogin session, no separate wallet button */}
         <div className="nav-right">
-          <SlushWalletBar />
-
           {loading ? (
             <LoadingSpinner size="sm" />
           ) : user ? (

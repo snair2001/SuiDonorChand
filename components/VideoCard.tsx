@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { formatSui } from "@/lib/pricing";
 import { toast } from "sonner";
-import { SlushPayButton } from "./SlushPayButton";
+import { PayButton } from "./PayButton";
 
 interface VideoCardProps {
   videoId: string;
@@ -88,7 +88,7 @@ export function VideoCard({
           Access Expired
         </div>
         {!isSoldOut && onPaymentSuccess && (
-          <SlushPayButton videoId={videoId} priceMist={priceMist} creatorAddress={creatorAddress}
+          <PayButton videoId={videoId} priceMist={priceMist} creatorAddress={creatorAddress}
             onSuccess={(d) => onPaymentSuccess(videoId, d)} label="Renew Access" />
         )}
       </div>
@@ -99,7 +99,7 @@ export function VideoCard({
       </div>
     );
     if (onPaymentSuccess) return (
-      <SlushPayButton videoId={videoId} priceMist={priceMist} creatorAddress={creatorAddress}
+      <PayButton videoId={videoId} priceMist={priceMist} creatorAddress={creatorAddress}
         onSuccess={(d) => onPaymentSuccess(videoId, d)} disabled={isPurchasing} />
     );
     return (
