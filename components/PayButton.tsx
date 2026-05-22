@@ -16,6 +16,7 @@ import { formatSui } from "@/lib/pricing";
 import { useWallets, useWalletConnection, useDAppKit } from "@mysten/dapp-kit-react";
 import { dAppKit } from "@/components/SuiProviders";
 import { Transaction } from "@mysten/sui/transactions";
+import { SLUSH_WALLET_NAME } from "@mysten/slush-wallet";
 
 interface PayButtonProps {
   videoId: string;
@@ -49,21 +50,27 @@ export function PayButton({
 
   // ── Step 1: Connect wallet ────────────────────────────────────────────────
   const handleConnect = async () => {
-    const slush = wallets.find(
-      (w) =>
-        w.name.toLowerCase().includes("slush") ||
-        w.name.toLowerCase().includes("sui wallet")
-    ) ?? wallets[0];
-
-    if (!slush) {
-      toast.error("No Sui wallet found. Please install Slush wallet.");
-      return;
-    }
-
     setConnecting(true);
     try {
+      // Slush may not appear in useWallets() immediately after registration.
+      // Retry for up to 2 seconds to give it time to populate.
+      let slush = wallets.find((w) => w.name === SLUSH_WALLET_NAME);
+      if (!slush) {
+        for (let i = 0; i < 4; i++) {
+          await new Promise((r) => setTimeout(r, 500));
+          const fresh = kit.stores.$wallets.get();
+          slush = fresh.find((w) => w.name === SLUSH_WALLET_NAME) ?? fresh[0];
+          if (slush) break;
+        }
+      }
+
+      if (!slush) {
+        toast.error("Slush wallet not found. Make sure you are using a supported browser.");
+        return;
+      }
+
       await kit.connectWallet({ wallet: slush });
-      toast.success("Wallet connected!");
+      toast.success("Slush wallet connected!");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (!msg.toLowerCase().includes("cancel") && !msg.toLowerCase().includes("reject")) {

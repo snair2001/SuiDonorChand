@@ -10,7 +10,6 @@ import { createDAppKit } from "@mysten/dapp-kit-core";
 import { DAppKitProvider } from "@mysten/dapp-kit-react";
 import { registerSlushWallet } from "@mysten/slush-wallet";
 import { SuiJsonRpcClient, getJsonRpcFullnodeUrl } from "@mysten/sui/jsonRpc";
-import { useEffect, useRef } from "react";
 
 const NETWORK = (process.env.NEXT_PUBLIC_SUI_NETWORK ?? "testnet") as
   | "testnet" | "mainnet" | "devnet";
@@ -29,15 +28,13 @@ const dAppKit = createDAppKit({
   slushWalletConfig: { appName: "PrivateTube Access Gate" },
 });
 
-export function SuiProviders({ children }: { children: React.ReactNode }) {
-  const registered = useRef(false);
-  useEffect(() => {
-    if (!registered.current) {
-      registerSlushWallet("PrivateTube Access Gate");
-      registered.current = true;
-    }
-  }, []);
+// Register Slush at module level so it's available before any component renders.
+// Guard with typeof window to avoid SSR errors.
+if (typeof window !== "undefined") {
+  registerSlushWallet("PrivateTube Access Gate");
+}
 
+export function SuiProviders({ children }: { children: React.ReactNode }) {
   return <DAppKitProvider dAppKit={dAppKit}>{children}</DAppKitProvider>;
 }
 
