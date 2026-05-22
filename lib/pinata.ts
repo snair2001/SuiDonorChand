@@ -315,6 +315,7 @@ export async function createAccessRecord(
 
 /**
  * Find the most recent active access record for a viewer+video
+ * Tries by address first, then by email as fallback
  */
 export async function findActiveAccess(
   viewerAddress: string,

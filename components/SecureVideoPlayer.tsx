@@ -20,14 +20,25 @@ export function SecureVideoPlayer({ videoId }: SecureVideoPlayerProps) {
   const [error, setError] = useState<string | null>(null);
   const [timeLeft, setTimeLeft] = useState("");
 
+  const [retrying, setRetrying] = useState(false);
+
   const fetchPlayData = useCallback(async () => {
     try {
+      // The play route already retries internally (Pinata indexing lag)
+      // Show a "verifying access" message while it works
       const res = await fetch(`/api/videos/${videoId}/play`);
       const data = await res.json();
-      if (!res.ok) { setError(data.message || data.error || "Access denied"); return; }
+      if (!res.ok) {
+        setError(data.message || data.error || "Access denied");
+        return;
+      }
       setPlayData(data);
-    } catch { setError("Failed to load video"); }
-    finally { setLoading(false); }
+    } catch {
+      setError("Failed to load video");
+    } finally {
+      setLoading(false);
+      setRetrying(false);
+    }
   }, [videoId]);
 
   useEffect(() => { fetchPlayData(); }, [fetchPlayData]);
