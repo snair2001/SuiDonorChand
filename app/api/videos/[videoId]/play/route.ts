@@ -2,6 +2,10 @@
  * GET /api/videos/[videoId]/play
  * Returns decrypted embed URL only if user has valid access
  * SECURITY: Decryption happens server-side only
+ *
+ * Looks up access by EMAIL (primary) and ADDRESS (fallback).
+ * This handles the case where Slush wallet address differs from zkLogin address.
+ * Retries up to 6x with 3s delay for Pinata IPFS indexing lag.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -11,41 +15,50 @@ import { decryptText } from "@/lib/encryption";
 import { toEmbedUrl, extractYouTubeId } from "@/lib/youtube";
 import type { AccessRecord } from "@/lib/pinata";
 
-/**
- * Find active access with retries — Pinata metadata indexing lags 5-15s.
- * Tries up to 6 times with 3s delay = up to 18s total wait.
- */
-async function findAccessWithRetry(
+async function findAccessRecord(
+  viewerEmail: string,
   viewerAddress: string,
   videoId: string
 ): Promise<AccessRecord | null> {
-  const name = `access-${viewerAddress}-${videoId}`;
+  // Try by email first (works regardless of which wallet was used)
+  const emailKey = `access-email-${viewerEmail.replace(/[@.]/g, "_")}-${videoId}`;
+  const addrKey = `access-${viewerAddress}-${videoId}`;
+
+  const latest =
+    (await findLatestFileByMetadataName(emailKey)) ??
+    (await findLatestFileByMetadataName(addrKey));
+
+  if (!latest) return null;
+
+  try {
+    const record = await getJsonFromCid<AccessRecord>(latest.cid);
+    const expiry = new Date(record.accessExpiresAt);
+    if (expiry > new Date()) return record;
+    return null; // expired
+  } catch {
+    return null;
+  }
+}
+
+async function findAccessWithRetry(
+  viewerEmail: string,
+  viewerAddress: string,
+  videoId: string
+): Promise<AccessRecord | null> {
   const maxAttempts = 6;
   const delayMs = 3000;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    console.log(`[play] Access lookup attempt ${attempt}/${maxAttempts} for ${name}`);
+    console.log(`[play] Attempt ${attempt}/${maxAttempts} email=${viewerEmail} addr=${viewerAddress} video=${videoId}`);
 
-    try {
-      const latest = await findLatestFileByMetadataName(name);
-
-      if (latest) {
-        const record = await getJsonFromCid<AccessRecord>(latest.cid);
-        const expiry = new Date(record.accessExpiresAt);
-        if (expiry > new Date()) {
-          console.log(`[play] Access found on attempt ${attempt}`);
-          return record;
-        } else {
-          console.log(`[play] Access record found but expired`);
-          return null; // expired — no point retrying
-        }
-      }
-    } catch (err) {
-      console.warn(`[play] Attempt ${attempt} error:`, err);
+    const access = await findAccessRecord(viewerEmail, viewerAddress, videoId);
+    if (access) {
+      console.log(`[play] Access found on attempt ${attempt}`);
+      return access;
     }
 
     if (attempt < maxAttempts) {
-      console.log(`[play] Not found yet, waiting ${delayMs}ms...`);
+      console.log(`[play] Not found, waiting ${delayMs}ms...`);
       await new Promise((r) => setTimeout(r, delayMs));
     }
   }
@@ -61,48 +74,30 @@ export async function GET(
   return withAuth(req, async (user) => {
     try {
       const { videoId } = await params;
+      if (!videoId) return NextResponse.json({ error: "Video ID required" }, { status: 400 });
 
-      if (!videoId) {
-        return NextResponse.json({ error: "Video ID required" }, { status: 400 });
-      }
-
-      console.log(`[play] Checking access for user=${user.suiAddress} video=${videoId}`);
-
-      // Find access with retry
-      const access = await findAccessWithRetry(user.suiAddress, videoId);
+      const access = await findAccessWithRetry(user.email, user.suiAddress, videoId);
 
       if (!access) {
-        console.log(`[play] 403 - no valid access found`);
         return NextResponse.json(
           {
             error: "Access denied",
-            message: "You do not have active access to this video. If you just purchased, please wait a few seconds and refresh.",
+            message: "No active access found. If you just purchased, click Try Again in a few seconds.",
           },
           { status: 403 }
         );
       }
 
-      // Fetch encrypted video metadata
       const result = await getVideoMetadata(videoId);
-      if (!result) {
-        return NextResponse.json({ error: "Video not found" }, { status: 404 });
-      }
+      if (!result) return NextResponse.json({ error: "Video not found" }, { status: 404 });
 
       const { metadata } = result;
-
-      // Decrypt YouTube URL server-side
       const rawUrl = decryptText(metadata.encryptedUrl, metadata.iv, metadata.authTag);
-
       const ytVideoId = extractYouTubeId(rawUrl);
-      if (!ytVideoId) {
-        return NextResponse.json({ error: "Invalid video data" }, { status: 500 });
-      }
+      if (!ytVideoId) return NextResponse.json({ error: "Invalid video data" }, { status: 500 });
 
-      const embedUrl = toEmbedUrl(ytVideoId);
-
-      console.log(`[play] Access granted, returning embed URL`);
       return NextResponse.json({
-        embedUrl,
+        embedUrl: toEmbedUrl(ytVideoId),
         expiresAt: access.accessExpiresAt,
         title: metadata.title,
       });

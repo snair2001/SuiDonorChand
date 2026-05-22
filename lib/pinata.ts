@@ -305,12 +305,22 @@ export async function updateVideoMetadata(
 
 /**
  * Create an access record on Pinata
+ * Named by email+videoId so it works regardless of which wallet address was used
  */
 export async function createAccessRecord(
   accessData: AccessRecord
 ): Promise<string> {
-  const name = `access-${accessData.viewerAddress}-${accessData.videoId}`;
-  return uploadJsonToPinata(accessData, name);
+  // Store by BOTH email and address for maximum lookup compatibility
+  const nameByEmail = `access-email-${accessData.viewerEmail.replace(/[@.]/g, "_")}-${accessData.videoId}`;
+  const nameByAddr = `access-${accessData.viewerAddress}-${accessData.videoId}`;
+
+  // Upload once, pin under both names
+  const cid = await uploadJsonToPinata(accessData, nameByEmail);
+
+  // Also upload under address-based name for backward compat
+  await uploadJsonToPinata(accessData, nameByAddr);
+
+  return cid;
 }
 
 /**
