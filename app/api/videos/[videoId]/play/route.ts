@@ -2,46 +2,55 @@
  * GET /api/videos/[videoId]/play
  * Returns decrypted embed URL only if user has valid access
  * SECURITY: Decryption happens server-side only
- *
- * Retries access lookup up to 3 times with delay because Pinata IPFS
- * metadata indexing can take a few seconds after upload.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
-import { findActiveAccess, findLatestFileByMetadataName, getJsonFromCid } from "@/lib/pinata";
-import { getVideoMetadata } from "@/lib/pinata";
+import { findLatestFileByMetadataName, getJsonFromCid, getVideoMetadata } from "@/lib/pinata";
 import { decryptText } from "@/lib/encryption";
 import { toEmbedUrl, extractYouTubeId } from "@/lib/youtube";
 import type { AccessRecord } from "@/lib/pinata";
 
-/** Retry Pinata access lookup — IPFS indexing can lag by a few seconds */
-async function findActiveAccessWithRetry(
+/**
+ * Find active access with retries — Pinata metadata indexing lags 5-15s.
+ * Tries up to 6 times with 3s delay = up to 18s total wait.
+ */
+async function findAccessWithRetry(
   viewerAddress: string,
-  videoId: string,
-  maxRetries = 4,
-  delayMs = 2000
+  videoId: string
 ): Promise<AccessRecord | null> {
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    if (attempt > 0) {
-      await new Promise((r) => setTimeout(r, delayMs));
-    }
+  const name = `access-${viewerAddress}-${videoId}`;
+  const maxAttempts = 6;
+  const delayMs = 3000;
 
-    const access = await findActiveAccess(viewerAddress, videoId);
-    if (access) return access;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    console.log(`[play] Access lookup attempt ${attempt}/${maxAttempts} for ${name}`);
 
-    // Also try searching by a broader pattern in case address differs
-    // (e.g. if Slush wallet address was used instead of zkLogin address)
-    const altName = `access-${viewerAddress}-${videoId}`;
-    const latest = await findLatestFileByMetadataName(altName);
-    if (latest) {
-      try {
+    try {
+      const latest = await findLatestFileByMetadataName(name);
+
+      if (latest) {
         const record = await getJsonFromCid<AccessRecord>(latest.cid);
         const expiry = new Date(record.accessExpiresAt);
-        if (expiry > new Date()) return record;
-      } catch { /* continue */ }
+        if (expiry > new Date()) {
+          console.log(`[play] Access found on attempt ${attempt}`);
+          return record;
+        } else {
+          console.log(`[play] Access record found but expired`);
+          return null; // expired — no point retrying
+        }
+      }
+    } catch (err) {
+      console.warn(`[play] Attempt ${attempt} error:`, err);
+    }
+
+    if (attempt < maxAttempts) {
+      console.log(`[play] Not found yet, waiting ${delayMs}ms...`);
+      await new Promise((r) => setTimeout(r, delayMs));
     }
   }
+
+  console.log(`[play] Access not found after ${maxAttempts} attempts`);
   return null;
 }
 
@@ -57,14 +66,17 @@ export async function GET(
         return NextResponse.json({ error: "Video ID required" }, { status: 400 });
       }
 
-      // Check active access with retry (Pinata indexing lag)
-      const access = await findActiveAccessWithRetry(user.suiAddress, videoId);
+      console.log(`[play] Checking access for user=${user.suiAddress} video=${videoId}`);
+
+      // Find access with retry
+      const access = await findAccessWithRetry(user.suiAddress, videoId);
 
       if (!access) {
+        console.log(`[play] 403 - no valid access found`);
         return NextResponse.json(
           {
             error: "Access denied",
-            message: "You do not have active access to this video",
+            message: "You do not have active access to this video. If you just purchased, please wait a few seconds and refresh.",
           },
           { status: 403 }
         );
@@ -81,7 +93,6 @@ export async function GET(
       // Decrypt YouTube URL server-side
       const rawUrl = decryptText(metadata.encryptedUrl, metadata.iv, metadata.authTag);
 
-      // Extract video ID and convert to safe embed URL
       const ytVideoId = extractYouTubeId(rawUrl);
       if (!ytVideoId) {
         return NextResponse.json({ error: "Invalid video data" }, { status: 500 });
@@ -89,13 +100,14 @@ export async function GET(
 
       const embedUrl = toEmbedUrl(ytVideoId);
 
+      console.log(`[play] Access granted, returning embed URL`);
       return NextResponse.json({
         embedUrl,
         expiresAt: access.accessExpiresAt,
         title: metadata.title,
       });
     } catch (err) {
-      console.error("Play video error:", err);
+      console.error("[play] Error:", err);
       return NextResponse.json({ error: "Failed to load video" }, { status: 500 });
     }
   });
