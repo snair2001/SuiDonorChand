@@ -1,22 +1,18 @@
 "use client";
 
 /**
- * PayButton
+ * PayButton — handles SUI payment via Slush wallet.
  *
- * Payment flow:
- * 1. User logs in with Google (zkLogin) — this is the ONLY login.
- * 2. When they click Pay, if Slush wallet is not connected, a small
- *    inline prompt appears asking them to connect Slush for signing.
- * 3. Once Slush is connected, the transaction is built and sent.
- * 4. Slush signs it — user approves in the extension popup.
- * 5. txDigest is returned to the backend to record access.
+ * Uses coinWithBalance intent (recommended for dApp Kit v2).
+ * Works with both old and new Slush wallet versions.
  *
- * Dev mode (localhost): mock payment, no wallet needed.
+ * Dev (localhost): mock payment, no wallet needed.
+ * Production: Slush wallet signs the transaction.
  */
 
 import { useState, useRef, useEffect } from "react";
 import { useDAppKit, useCurrentAccount, useWallets } from "@mysten/dapp-kit-react";
-import { Transaction } from "@mysten/sui/transactions";
+import { Transaction, coinWithBalance } from "@mysten/sui/transactions";
 import { toast } from "sonner";
 import { formatSui } from "@/lib/pricing";
 
@@ -47,7 +43,6 @@ export function PayButton({
   const [showWalletPicker, setShowWalletPicker] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
 
-  // Close picker on outside click
   useEffect(() => {
     if (!showWalletPicker) return;
     const handler = (e: MouseEvent) => {
@@ -69,7 +64,7 @@ export function PayButton({
     try {
       await dAppKit.connectWallet({ wallet });
       setShowWalletPicker(false);
-      toast.success(`${wallet.name} connected`);
+      toast.success(`${wallet.name} connected — click Pay to continue`);
     } catch {
       toast.error("Failed to connect wallet");
     } finally {
@@ -78,10 +73,10 @@ export function PayButton({
   };
 
   const handlePay = async () => {
-    // Dev mock
+    // ── Dev mock ───────────────────────────────────────────────────────────
     if (isDev) {
       setPaying(true);
-      await new Promise((r) => setTimeout(r, 600));
+      await new Promise((r) => setTimeout(r, 800));
       const mockDigest = `MOCK_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
       toast.info("Dev mode: mock payment");
       onSuccess(mockDigest);
@@ -89,7 +84,7 @@ export function PayButton({
       return;
     }
 
-    // Production: need wallet connected
+    // ── Need wallet connected ──────────────────────────────────────────────
     if (!account) {
       setShowWalletPicker(true);
       return;
@@ -107,33 +102,54 @@ export function PayButton({
       const feeMist = (totalMist * PLATFORM_FEE_BPS) / 10000n;
       const creatorMist = totalMist - feeMist;
 
+      // Build transaction using coinWithBalance (works with all wallet versions)
       const tx = new Transaction();
-      tx.setSender(account.address);
-      const [creatorCoin, feeCoin] = tx.splitCoins(tx.gas, [
-        tx.pure.u64(creatorMist),
-        tx.pure.u64(feeMist),
-      ]);
-      tx.transferObjects([creatorCoin], tx.pure.address(creatorAddress));
-      tx.transferObjects([feeCoin], tx.pure.address(treasuryAddress));
+
+      // Transfer to creator (90%)
+      tx.transferObjects(
+        [coinWithBalance({ balance: creatorMist })],
+        tx.pure.address(creatorAddress)
+      );
+
+      // Transfer to platform treasury (10%)
+      tx.transferObjects(
+        [coinWithBalance({ balance: feeMist })],
+        tx.pure.address(treasuryAddress)
+      );
 
       const result = await dAppKit.signAndExecuteTransaction({ transaction: tx });
 
-      const digest =
-        "digest" in result
-          ? (result as { digest: string }).digest
-          : result.$kind === "Transaction"
-          ? result.Transaction.digest
-          : null;
+      // Extract digest from result union type
+      let digest: string | null = null;
+      if (result && typeof result === "object") {
+        if ("digest" in result && typeof result.digest === "string") {
+          digest = result.digest;
+        } else if (result.$kind === "Transaction" && result.Transaction?.digest) {
+          digest = result.Transaction.digest;
+        }
+      }
 
-      if (!digest) { toast.error("Could not get transaction digest"); return; }
+      if (!digest) {
+        toast.error("Could not get transaction digest from wallet");
+        return;
+      }
+
       toast.success("Payment confirmed!");
       onSuccess(digest);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.toLowerCase().includes("reject") || msg.toLowerCase().includes("cancel") || msg.toLowerCase().includes("denied")) {
+      console.error("Payment error:", msg);
+      if (
+        msg.toLowerCase().includes("reject") ||
+        msg.toLowerCase().includes("cancel") ||
+        msg.toLowerCase().includes("denied") ||
+        msg.toLowerCase().includes("user rejected")
+      ) {
         toast.info("Payment cancelled");
+      } else if (msg.toLowerCase().includes("insufficient")) {
+        toast.error("Insufficient SUI balance. Get testnet SUI from faucet.sui.io");
       } else {
-        toast.error(`Payment failed: ${msg}`);
+        toast.error(`Payment failed: ${msg.slice(0, 100)}`);
       }
     } finally {
       setPaying(false);
@@ -144,7 +160,6 @@ export function PayButton({
 
   return (
     <div style={{ position: "relative" }}>
-      {/* Main pay button */}
       <button
         onClick={handlePay}
         disabled={disabled || paying || connecting}
@@ -169,7 +184,6 @@ export function PayButton({
         )}
       </button>
 
-      {/* Connected wallet indicator */}
       {account && !paying && (
         <p style={{ fontSize: "0.75rem", textAlign: "center", color: "#475569", marginTop: "0.375rem" }}>
           via{" "}
@@ -186,16 +200,14 @@ export function PayButton({
         </p>
       )}
 
-      {/* Wallet picker dropdown */}
+      {/* Wallet picker */}
       {showWalletPicker && (
         <div
           ref={pickerRef}
           style={{
             position: "absolute",
             bottom: "calc(100% + 0.5rem)",
-            left: 0,
-            right: 0,
-            zIndex: 50,
+            left: 0, right: 0, zIndex: 50,
             background: "#0f0a2e",
             border: "1px solid rgba(168,85,247,0.3)",
             borderRadius: "0.875rem",
@@ -209,16 +221,8 @@ export function PayButton({
 
           {wallets.length === 0 ? (
             <div style={{ textAlign: "center", padding: "0.75rem 0" }}>
-              <p style={{ fontSize: "0.8125rem", color: "#64748b", marginBottom: "0.625rem" }}>
-                No wallets detected
-              </p>
-              <a
-                href="https://slush.app"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn btn-primary btn-sm"
-                style={{ display: "inline-flex" }}
-              >
+              <p style={{ fontSize: "0.8125rem", color: "#64748b", marginBottom: "0.625rem" }}>No wallets detected</p>
+              <a href="https://slush.app" target="_blank" rel="noopener noreferrer" className="btn btn-primary btn-sm" style={{ display: "inline-flex" }}>
                 Install Slush →
               </a>
             </div>
@@ -230,26 +234,15 @@ export function PayButton({
                   onClick={() => connectWallet(wallet)}
                   disabled={connecting}
                   style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "0.75rem",
+                    display: "flex", alignItems: "center", gap: "0.75rem",
                     padding: "0.625rem 0.875rem",
                     background: "rgba(255,255,255,0.04)",
                     border: "1px solid rgba(255,255,255,0.08)",
                     borderRadius: "0.625rem",
-                    cursor: "pointer",
-                    width: "100%",
-                    textAlign: "left",
-                    transition: "all 0.15s",
+                    cursor: "pointer", width: "100%", textAlign: "left", transition: "all 0.15s",
                   }}
-                  onMouseEnter={e => {
-                    (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(168,85,247,0.4)";
-                    (e.currentTarget as HTMLButtonElement).style.background = "rgba(168,85,247,0.08)";
-                  }}
-                  onMouseLeave={e => {
-                    (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.08)";
-                    (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.04)";
-                  }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(168,85,247,0.4)"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(168,85,247,0.08)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.08)"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.04)"; }}
                 >
                   {wallet.icon ? (
                     <img src={wallet.icon} alt={wallet.name} style={{ width: "28px", height: "28px", borderRadius: "6px" }} />
@@ -259,14 +252,14 @@ export function PayButton({
                     </div>
                   )}
                   <span style={{ fontSize: "0.875rem", fontWeight: 500, color: "#f8fafc" }}>{wallet.name}</span>
-                  <span style={{ marginLeft: "auto", color: "#475569", fontSize: "0.875rem" }}>→</span>
+                  <span style={{ marginLeft: "auto", color: "#475569" }}>→</span>
                 </button>
               ))}
             </div>
           )}
 
           <p style={{ fontSize: "0.75rem", color: "#334155", marginTop: "0.75rem", textAlign: "center" }}>
-            Use the same Google account as your zkLogin
+            Unlock Slush with your password, then click the wallet above
           </p>
         </div>
       )}
