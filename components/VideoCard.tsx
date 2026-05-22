@@ -77,7 +77,8 @@ export function VideoCard({
         🚫 Disabled by Admin
       </div>
     );
-    if (accessStatus === "active" && expiresAt) return (
+    // Show Watch Now whenever access is active — even if expiresAt is null
+    if (accessStatus === "active") return (
       <Link href={`/watch/${videoId}`} className="btn btn-success btn-full">
         ▶ Watch Now
       </Link>
