@@ -32,11 +32,23 @@ export async function POST(req: NextRequest) {
 
       const { videoId, txDigest } = body;
 
-      // Check for duplicate transaction
+      // Check for duplicate transaction — return existing access if found
       const isDuplicate = await isPurchaseDuplicate(videoId, txDigest);
       if (isDuplicate) {
+        // Try to find the existing access record and return it
+        const { findAnyAccess } = await import("@/lib/pinata");
+        const existingAccess = await findAnyAccess(user.suiAddress, videoId, user.email);
         return NextResponse.json(
-          { error: "Transaction already processed" },
+          {
+            error: "Transaction already processed",
+            access: existingAccess
+              ? {
+                  hasAccess: new Date(existingAccess.accessExpiresAt) > new Date(),
+                  expiresAt: existingAccess.accessExpiresAt,
+                  videoId,
+                }
+              : null,
+          },
           { status: 409 }
         );
       }

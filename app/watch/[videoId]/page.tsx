@@ -103,13 +103,35 @@ export default function WatchPage() {
         body: JSON.stringify({ videoId, txDigest }),
       });
       const data = await res.json();
+
+      if (res.status === 409) {
+        // Transaction already processed — access record should exist.
+        // Use the access from the 409 response if available, otherwise re-check.
+        if (data.access?.hasAccess) {
+          toast.success("Access confirmed!");
+          setAccess({
+            hasAccess: true,
+            expiresAt: data.access.expiresAt ?? null,
+            isExpired: false,
+          });
+          return;
+        }
+        toast.info("Payment already recorded. Checking your access...");
+        await checkAccess();
+        // If still not found after re-check, optimistically grant access —
+        // the player's own retry loop will confirm within ~18s.
+        setAccess((prev) =>
+          prev?.hasAccess ? prev : { hasAccess: true, expiresAt: null, isExpired: false }
+        );
+        return;
+      }
+
       if (!res.ok) {
         toast.error(data.error || "Failed to record payment");
         return;
       }
+
       toast.success("Payment recorded! Preparing your video...");
-      // Set access — the SecureVideoPlayer's internal retry loop (up to ~18s)
-      // will handle IPFS propagation lag automatically.
       setAccess({
         hasAccess: true,
         expiresAt: data.access?.expiresAt ?? null,
@@ -256,6 +278,15 @@ export default function WatchPage() {
               <Link href="/marketplace" className="btn btn-outline btn-sm">
                 ← Back to Marketplace
               </Link>
+
+              {/* Recovery button for users who already paid but access isn't showing */}
+              <button
+                onClick={checkAccess}
+                disabled={accessLoading}
+                style={{ background: "none", border: "none", color: "#475569", fontSize: "0.8125rem", cursor: "pointer", textDecoration: "underline" }}
+              >
+                {accessLoading ? "Checking..." : "Already paid? Check access"}
+              </button>
             </div>
           </div>
         )}
