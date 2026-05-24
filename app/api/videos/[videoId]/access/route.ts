@@ -21,19 +21,27 @@ export async function GET(
       const emailKey = `access-email-${user.email.replace(/[@.]/g, "_")}-${videoId}`;
       const addrKey = `access-${user.suiAddress}-${videoId}`;
 
+      console.log(`[access] Checking videoId=${videoId} email=${user.email} addr=${user.suiAddress}`);
+      console.log(`[access] emailKey=${emailKey}`);
+
       const latest =
         (await findLatestFileByMetadataName(emailKey)) ??
         (await findLatestFileByMetadataName(addrKey));
 
       if (!latest) {
+        console.log(`[access] No record found for videoId=${videoId}`);
         return NextResponse.json({ hasAccess: false, expiresAt: null, isExpired: false });
       }
 
+      console.log(`[access] Found record CID=${latest.cid}`);
+
       try {
         const record = await getJsonFromCid<AccessRecord>(latest.cid);
+        console.log(`[access] Record videoId=${record.videoId} expiresAt=${record.accessExpiresAt}`);
 
         // Validate the record actually belongs to this video
         if (record.videoId !== videoId) {
+          console.log(`[access] videoId mismatch: record has ${record.videoId}, requested ${videoId}`);
           return NextResponse.json({ hasAccess: false, expiresAt: null, isExpired: false });
         }
 
@@ -41,12 +49,14 @@ export async function GET(
         const expiry = new Date(record.accessExpiresAt);
         const isExpired = expiry <= now;
 
+        console.log(`[access] hasAccess=${!isExpired} isExpired=${isExpired}`);
         return NextResponse.json({
           hasAccess: !isExpired,
           expiresAt: record.accessExpiresAt,
           isExpired,
         });
-      } catch {
+      } catch (e) {
+        console.error(`[access] Failed to fetch/parse record:`, e);
         return NextResponse.json({ hasAccess: false, expiresAt: null, isExpired: false });
       }
     } catch (err) {

@@ -128,6 +128,8 @@ export async function POST(req: NextRequest) {
       const isSoldOut = newGrossRevenue >= revenueCapUsd;
 
       // Upload new video metadata version and update registry atomically
+      // Pass existing metadata directly to avoid re-fetching from IPFS gateway
+      // (prevents stale cache from corrupting encryptedUrl/iv/authTag fields)
       await updateVideoMetadata(videoId, {
         totalGrossRevenueUsd: newGrossRevenue,
         totalCreatorRevenueUsd: newCreatorRevenue,
@@ -137,7 +139,7 @@ export async function POST(req: NextRequest) {
         status: isSoldOut ? ("sold_out" as const) : ("active" as const),
         removedReason: isSoldOut ? "Revenue cap reached" : null,
         removedAt: isSoldOut ? new Date().toISOString() : null,
-      });
+      }, metadata);
 
       return NextResponse.json({
         success: true,

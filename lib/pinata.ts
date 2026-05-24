@@ -270,15 +270,25 @@ export async function getVideoMetadata(
 
 /**
  * Update video metadata: upload new version and update registry
+ * Optionally accepts existing metadata to avoid re-fetching from IPFS gateway
+ * (prevents stale gateway cache from corrupting encryption fields)
  */
 export async function updateVideoMetadata(
   videoId: string,
-  updatedData: Partial<VideoMetadata>
+  updatedData: Partial<VideoMetadata>,
+  existingMetadata?: VideoMetadata
 ): Promise<string> {
-  const existing = await getVideoMetadata(videoId);
-  if (!existing) throw new Error(`Video ${videoId} not found in registry`);
+  let base: VideoMetadata;
 
-  const updated: VideoMetadata = { ...existing.metadata, ...updatedData };
+  if (existingMetadata) {
+    base = existingMetadata;
+  } else {
+    const existing = await getVideoMetadata(videoId);
+    if (!existing) throw new Error(`Video ${videoId} not found in registry`);
+    base = existing.metadata;
+  }
+
+  const updated: VideoMetadata = { ...base, ...updatedData };
 
   // Upload new metadata version
   const newCid = await uploadJsonToPinata(
