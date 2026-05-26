@@ -4,6 +4,13 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
+const DURATION_OPTIONS = [
+  { label: "1 Hour", value: 1 },
+  { label: "24 Hours", value: 24 },
+  { label: "7 Days", value: 168 },
+  { label: "30 Days", value: 720 },
+];
+
 interface FormData {
   title: string;
   description: string;
@@ -34,7 +41,7 @@ export function CreateVideoForm() {
   const [created, setCreated] = useState<CreatedVideo | null>(null);
   const [copiedCid, setCopiedCid] = useState(false);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setForm(p => ({ ...p, [name]: value }));
     if (errors[name as keyof FormErrors]) setErrors(p => ({ ...p, [name]: undefined }));
@@ -166,13 +173,17 @@ export function CreateVideoForm() {
         </div>
         <div>
           <label className="label" htmlFor="durationHours">Access Duration *</label>
-          <div style={{ position: "relative" }}>
-            <input id="durationHours" name="durationHours" type="number" value={form.durationHours} onChange={handleChange}
-              min="1" max="8760" step="1"
-              className={`input${errors.durationHours ? " input-error" : ""}`}
-              style={{ paddingRight: "3rem" }} />
-            <span style={{ position: "absolute", right: "0.875rem", top: "50%", transform: "translateY(-50%)", fontSize: "0.8125rem", color: "#475569" }}>hrs</span>
-          </div>
+          <select
+            id="durationHours"
+            name="durationHours"
+            value={form.durationHours}
+            onChange={handleChange}
+            className={`input${errors.durationHours ? " input-error" : ""}`}
+          >
+            {DURATION_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
           {errors.durationHours && <p className="field-error">{errors.durationHours}</p>}
         </div>
       </div>
