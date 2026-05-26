@@ -4,13 +4,11 @@
  * SuiProviders — wraps app with dApp Kit + Slush wallet for payment signing.
  * Authentication is handled by zkLogin (Google). Slush is used ONLY for
  * signing payment transactions — it is NOT a second login.
- *
- * slushWalletConfig in createDAppKit handles Slush registration internally.
- * Do NOT call registerSlushWallet separately — it creates a duplicate.
  */
 
 import { createDAppKit } from "@mysten/dapp-kit-core";
 import { DAppKitProvider } from "@mysten/dapp-kit-react";
+import { registerSlushWallet } from "@mysten/slush-wallet";
 import { SuiJsonRpcClient, getJsonRpcFullnodeUrl } from "@mysten/sui/jsonRpc";
 
 const NETWORK = (process.env.NEXT_PUBLIC_SUI_NETWORK ?? "testnet") as
@@ -27,9 +25,14 @@ const dAppKit = createDAppKit({
       network: network as "testnet" | "mainnet" | "devnet",
     }),
   defaultNetwork: NETWORK,
-  // slushWalletConfig registers Slush internally — no separate registerSlushWallet needed
   slushWalletConfig: { appName: "PrivateTube Access Gate" },
 });
+
+// Register Slush at module level so it's available before any component renders.
+// Guard with typeof window to avoid SSR errors.
+if (typeof window !== "undefined") {
+  registerSlushWallet("PrivateTube Access Gate");
+}
 
 export function SuiProviders({ children }: { children: React.ReactNode }) {
   return <DAppKitProvider dAppKit={dAppKit}>{children}</DAppKitProvider>;

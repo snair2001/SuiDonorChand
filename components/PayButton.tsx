@@ -5,9 +5,8 @@
  *
  * Flow:
  * 1. If wallet not connected → show "Connect Slush Wallet" button
- *    → calls kit.connectWallet() which opens the Slush popup
- * 2. Once connected → show price + confirm dialog
- * 3. On confirm → build SUI transfer Transaction, sign+execute via Slush
+ * 2. Once connected → show price confirmation
+ * 3. On confirm → build a SUI transfer Transaction and sign+execute via Slush
  * 4. On success → call onSuccess(txDigest)
  */
 
@@ -17,6 +16,7 @@ import { formatSui } from "@/lib/pricing";
 import { useWallets, useWalletConnection, useDAppKit } from "@mysten/dapp-kit-react";
 import { dAppKit } from "@/components/SuiProviders";
 import { Transaction } from "@mysten/sui/transactions";
+import { SLUSH_WALLET_NAME } from "@mysten/slush-wallet";
 
 interface PayButtonProps {
   videoId: string;
@@ -28,7 +28,7 @@ interface PayButtonProps {
 }
 
 export function PayButton({
-  videoId: _videoId,
+  videoId,
   priceMist,
   creatorAddress,
   onSuccess,
@@ -50,22 +50,30 @@ export function PayButton({
 
   // ── Step 1: Connect wallet ────────────────────────────────────────────────
   const handleConnect = async () => {
-    // slushWalletConfig ensures Slush is always registered as the first wallet
-    const wallet = wallets[0];
-
-    if (!wallet) {
-      toast.error("Slush wallet is not available. Please try refreshing the page.");
-      return;
-    }
-
     setConnecting(true);
     try {
-      await kit.connectWallet({ wallet });
-      // Connection success is reflected via useWalletConnection re-render
+      // Slush may not appear in useWallets() immediately after registration.
+      // Retry for up to 2 seconds to give it time to populate.
+      let slush = wallets.find((w) => w.name === SLUSH_WALLET_NAME);
+      if (!slush) {
+        for (let i = 0; i < 4; i++) {
+          await new Promise((r) => setTimeout(r, 500));
+          const fresh = kit.stores.$wallets.get();
+          slush = fresh.find((w) => w.name === SLUSH_WALLET_NAME) ?? fresh[0];
+          if (slush) break;
+        }
+      }
+
+      if (!slush) {
+        toast.error("Slush wallet not found. Make sure you are using a supported browser.");
+        return;
+      }
+
+      await kit.connectWallet({ wallet: slush });
+      toast.success("Slush wallet connected!");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (!msg.toLowerCase().includes("cancel") && !msg.toLowerCase().includes("reject")) {
-        console.error("[PayButton] connect error:", err);
         toast.error("Failed to connect wallet. Please try again.");
       }
     } finally {
@@ -84,12 +92,12 @@ export function PayButton({
     setPaying(true);
     try {
       const tx = new Transaction();
-      // Split priceMist MIST from gas coin and transfer to creator
+
+      // Transfer priceMist MIST to the creator
       const [coin] = tx.splitCoins(tx.gas, [BigInt(priceMist)]);
       tx.transferObjects([coin], creatorAddress);
 
       const result = await kit.signAndExecuteTransaction({ transaction: tx });
-
       // result is a discriminated union: { $kind: "Transaction", Transaction: { digest, ... } }
       const digest =
         result.$kind === "Transaction"
@@ -155,15 +163,11 @@ export function PayButton({
         </p>
         {account && (
           <p style={{ fontSize: "0.75rem", color: "#475569", marginBottom: "0.25rem" }}>
-            From:{" "}
-            <code style={{ color: "#94a3b8" }}>
-              {account.address.slice(0, 10)}…{account.address.slice(-6)}
-            </code>
+            From: <code style={{ color: "#94a3b8" }}>{account.address.slice(0, 10)}…{account.address.slice(-6)}</code>
           </p>
         )}
         <p style={{ fontSize: "0.8125rem", color: "#94a3b8", marginBottom: "0.875rem" }}>
-          Pay <strong style={{ color: "#a855f7" }}>{priceSui} SUI</strong> for
-          time-limited access on Sui testnet
+          Pay <strong style={{ color: "#a855f7" }}>{priceSui} SUI</strong> for time-limited access on Sui testnet
         </p>
         <div style={{ display: "flex", gap: "0.625rem" }}>
           <button
@@ -215,9 +219,7 @@ function SuiIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 32 32" fill="none" aria-hidden="true">
       <circle cx="16" cy="16" r="15" stroke="rgba(255,255,255,0.5)" strokeWidth="2" fill="none" />
-      <text x="16" y="21" textAnchor="middle" fill="white" fontSize="14" fontWeight="bold" fontFamily="sans-serif">
-        S
-      </text>
+      <text x="16" y="21" textAnchor="middle" fill="white" fontSize="14" fontWeight="bold" fontFamily="sans-serif">S</text>
     </svg>
   );
 }
