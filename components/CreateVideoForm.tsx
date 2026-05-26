@@ -3,6 +3,10 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { useWallets, useWalletConnection, useDAppKit } from "@mysten/dapp-kit-react";
+import { dAppKit } from "@/components/SuiProviders";
+import { Transaction } from "@mysten/sui/transactions";
+import { SLUSH_WALLET_NAME } from "@mysten/slush-wallet";
 
 const DURATION_OPTIONS = [
   { label: "1 Hour", value: 1 },
@@ -38,13 +42,89 @@ export function CreateVideoForm() {
   const [form, setForm] = useState<FormData>({ title: "", description: "", youtubeUrl: "", priceSui: "1", durationHours: "24" });
   const [errors, setErrors] = useState<FormErrors>({});
   const [loading, setLoading] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [creatingCampaign, setCreatingCampaign] = useState(false);
   const [created, setCreated] = useState<CreatedVideo | null>(null);
+  const [ipfsVideo, setIpfsVideo] = useState<{ videoId: string; cid: string; title: string } | null>(null);
   const [copiedCid, setCopiedCid] = useState(false);
+
+  const wallets = useWallets({ dAppKit });
+  const connection = useWalletConnection({ dAppKit: dAppKit as any });
+  const kit = useDAppKit(dAppKit);
+
+  const isConnected = connection.isConnected;
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setForm(p => ({ ...p, [name]: value }));
     if (errors[name as keyof FormErrors]) setErrors(p => ({ ...p, [name]: undefined }));
+  };
+
+  const handleConnect = async () => {
+    setConnecting(true);
+    try {
+      let slush = wallets.find((w) => w.name === SLUSH_WALLET_NAME);
+      if (!slush) {
+        for (let i = 0; i < 4; i++) {
+          await new Promise((r) => setTimeout(r, 500));
+          const fresh = kit.stores.$wallets.get();
+          slush = fresh.find((w) => w.name === SLUSH_WALLET_NAME) ?? fresh[0];
+          if (slush) break;
+        }
+      }
+
+      if (!slush) {
+        toast.error("Slush wallet not found. Make sure you are using a supported browser.");
+        return;
+      }
+
+      await kit.connectWallet({ wallet: slush });
+      toast.success("Slush wallet connected!");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.toLowerCase().includes("cancel") && !msg.toLowerCase().includes("reject")) {
+        toast.error("Failed to connect wallet. Please try again.");
+      }
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const createCampaignOnChain = async (videoId: string, priceSui: number, durationHours: number) => {
+    setCreatingCampaign(true);
+    try {
+      const priceMist = BigInt(Math.floor(priceSui * 1_000_000_000));
+      const tx = new Transaction();
+
+      tx.moveCall({
+        target: `${process.env.NEXT_PUBLIC_PACKAGE_ID}::private_tube::create_campaign`,
+        arguments: [
+          tx.pure.string(videoId),
+          tx.pure.u64(priceMist),
+          tx.pure.u64(BigInt(durationHours)),
+        ],
+      });
+
+      const result = await kit.signAndExecuteTransaction({ transaction: tx });
+      const digest =
+        result.$kind === "Transaction"
+          ? result.Transaction.digest
+          : (result as unknown as { digest: string }).digest;
+
+      toast.success("Campaign created on Sui testnet!");
+      return digest;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.toLowerCase().includes("cancel") || msg.toLowerCase().includes("reject")) {
+        toast.info("Campaign creation cancelled.");
+      } else {
+        console.error("[CreateVideoForm] create campaign error:", err);
+        toast.error("Failed to create campaign on-chain. Please try again.");
+      }
+      throw err;
+    } finally {
+      setCreatingCampaign(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -63,10 +143,20 @@ export function CreateVideoForm() {
         else toast.error(data.error || "Failed to create video");
         return;
       }
-      setCreated(data.video);
+      setIpfsVideo(data.video);
       toast.success("Video encrypted and uploaded to IPFS!");
     } catch { toast.error("Network error. Please try again."); }
     finally { setLoading(false); }
+  };
+
+  const handleCreateCampaign = async () => {
+    if (!ipfsVideo) return;
+    try {
+      await createCampaignOnChain(ipfsVideo.videoId, parseFloat(form.priceSui), parseFloat(form.durationHours));
+      setCreated(ipfsVideo);
+      setIpfsVideo(null);
+    } catch {
+    }
   };
 
   const copyCid = async () => {
@@ -84,7 +174,7 @@ export function CreateVideoForm() {
         </div>
         <div>
           <h2 style={{ fontSize: "1.5rem", fontWeight: 700, color: "#f8fafc" }}>Video Created!</h2>
-          <p style={{ color: "#64748b", marginTop: "0.375rem" }}>Encrypted and stored on Pinata IPFS</p>
+          <p style={{ color: "#64748b", marginTop: "0.375rem" }}>Encrypted, stored on Pinata IPFS, and campaign created on-chain!</p>
         </div>
 
         <div className="stack-sm" style={{ textAlign: "left" }}>
@@ -121,6 +211,38 @@ export function CreateVideoForm() {
             View Marketplace
           </button>
         </div>
+      </div>
+    );
+  }
+
+  if (ipfsVideo) {
+    return (
+      <div style={{ textAlign: "center" }} className="stack-lg">
+        <div style={{ width: "64px", height: "64px", borderRadius: "50%", background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.3)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "2rem", margin: "0 auto" }}>
+          📦
+        </div>
+        <div>
+          <h2 style={{ fontSize: "1.5rem", fontWeight: 700, color: "#f8fafc" }}>Video Uploaded to IPFS!</h2>
+          <p style={{ color: "#64748b", marginTop: "0.375rem" }}>Now create the campaign on-chain with Slush Wallet!</p>
+        </div>
+
+        {!isConnected ? (
+          <button
+            onClick={handleConnect}
+            disabled={connecting}
+            className="btn btn-primary btn-full"
+          >
+            {connecting ? "Connecting..." : "Connect Slush Wallet"}
+          </button>
+        ) : (
+          <button
+            onClick={handleCreateCampaign}
+            disabled={creatingCampaign}
+            className="btn btn-primary btn-full"
+          >
+            {creatingCampaign ? "Creating Campaign On-Chain..." : "Create Campaign On-Chain"}
+          </button>
+        )}
       </div>
     );
   }
@@ -196,6 +318,7 @@ export function CreateVideoForm() {
           <ul style={{ fontSize: "0.8125rem", color: "#64748b", lineHeight: 1.7, paddingLeft: "1rem" }}>
             <li>YouTube URL encrypted with AES-256-GCM</li>
             <li>Encrypted metadata stored on Pinata IPFS</li>
+            <li>Campaign created on Sui testnet</li>
             <li>Revenue cap: $20 USD gross per video</li>
             <li>Platform fee: 10% · Creator earnings: 90%</li>
           </ul>
@@ -209,7 +332,7 @@ export function CreateVideoForm() {
             Encrypting & Uploading to IPFS...
           </>
         ) : (
-          <> 🔐 Encrypt & Publish to IPFS </>
+          <> 🔐 Encrypt & Upload to IPFS </>
         )}
       </button>
     </form>
