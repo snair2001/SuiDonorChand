@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
     const nonce = randomBytes(16).toString("hex");
 
     // Store nonce in a short-lived cookie for verification
-    const oauthUrl = generateGoogleOAuthUrl(nonce);
+    const oauthUrl = generateGoogleOAuthUrl(nonce, req.url);
 
     const response = NextResponse.redirect(oauthUrl);
 

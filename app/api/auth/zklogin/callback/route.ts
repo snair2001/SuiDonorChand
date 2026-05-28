@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Exchange code for tokens
-    const tokens = await exchangeCodeForTokens(code);
+    const tokens = await exchangeCodeForTokens(code, req.url);
 
     if (!tokens.id_token) {
       return NextResponse.redirect(`${appUrl}/login?error=no_id_token`);
