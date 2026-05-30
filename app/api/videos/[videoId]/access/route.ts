@@ -1,13 +1,14 @@
 /**
  * GET /api/videos/[videoId]/access
  * Check if the current user has active access to a video
- * Checks by email (primary) and address (fallback)
+ * NOW VIA SUI BLOCKCHAIN (tamper-proof, non-repudiation!)
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
-import { findLatestFileByMetadataName, getJsonFromCid } from "@/lib/pinata";
-import type { AccessRecord } from "@/lib/pinata";
+import { checkAccessOnChain } from "@/lib/sui";
+
+const PACKAGE_ID = process.env.NEXT_PUBLIC_PACKAGE_ID || "";
 
 export async function GET(
   req: NextRequest,
@@ -18,47 +19,19 @@ export async function GET(
       const { videoId } = await params;
       if (!videoId) return NextResponse.json({ error: "Video ID required" }, { status: 400 });
 
-      const emailKey = `access-email-${user.email.replace(/[@.]/g, "_")}-${videoId}`;
-      const addrKey = `access-${user.suiAddress}-${videoId}`;
+      console.log(`[access] Checking on-chain videoId=${videoId} addr=${user.suiAddress}`);
 
-      console.log(`[access] Checking videoId=${videoId} email=${user.email} addr=${user.suiAddress}`);
-      console.log(`[access] emailKey=${emailKey}`);
+      const access = await checkAccessOnChain(user.suiAddress, videoId, PACKAGE_ID);
 
-      const latest =
-        (await findLatestFileByMetadataName(emailKey)) ??
-        (await findLatestFileByMetadataName(addrKey));
+      const isExpired = access.expiresAt ? Date.now() > access.expiresAt : false;
 
-      if (!latest) {
-        console.log(`[access] No record found for videoId=${videoId}`);
-        return NextResponse.json({ hasAccess: false, expiresAt: null, isExpired: false });
-      }
+      console.log(`[access] On-chain check result: hasAccess=${access.hasAccess}, isExpired=${isExpired}`);
 
-      console.log(`[access] Found record CID=${latest.cid}`);
-
-      try {
-        const record = await getJsonFromCid<AccessRecord>(latest.cid);
-        console.log(`[access] Record videoId=${record.videoId} expiresAt=${record.accessExpiresAt}`);
-
-        // Validate the record actually belongs to this video
-        if (record.videoId !== videoId) {
-          console.log(`[access] videoId mismatch: record has ${record.videoId}, requested ${videoId}`);
-          return NextResponse.json({ hasAccess: false, expiresAt: null, isExpired: false });
-        }
-
-        const now = new Date();
-        const expiry = new Date(record.accessExpiresAt);
-        const isExpired = expiry <= now;
-
-        console.log(`[access] hasAccess=${!isExpired} isExpired=${isExpired}`);
-        return NextResponse.json({
-          hasAccess: !isExpired,
-          expiresAt: record.accessExpiresAt,
-          isExpired,
-        });
-      } catch (e) {
-        console.error(`[access] Failed to fetch/parse record:`, e);
-        return NextResponse.json({ hasAccess: false, expiresAt: null, isExpired: false });
-      }
+      return NextResponse.json({
+        hasAccess: access.hasAccess && !isExpired,
+        expiresAt: access.expiresAt ? new Date(access.expiresAt).toISOString() : null,
+        isExpired,
+      });
     } catch (err) {
       console.error("Check access error:", err);
       return NextResponse.json({ error: "Failed to check access" }, { status: 500 });

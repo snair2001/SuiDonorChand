@@ -1,192 +1,94 @@
 /**
- * Sui blockchain utilities
- * Handles transaction verification and payment processing
- * Uses direct JSON-RPC calls for compatibility with @mysten/sui v2.x
+ * Sui Blockchain Helpers
+ * For verifying access via on-chain events and reading objects
  */
 
-const SUI_RPC_URL =
-  process.env.NEXT_PUBLIC_SUI_RPC_URL ||
-  "https://fullnode.testnet.sui.io:443";
+import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
 
-// ─── JSON-RPC Helper ──────────────────────────────────────────────────────────
+const SUI_NETWORK = process.env.NEXT_PUBLIC_SUI_NETWORK || "testnet";
+const SUI_RPC_URL = process.env.NEXT_PUBLIC_SUI_RPC_URL || getFullnodeUrl(SUI_NETWORK as any);
 
-async function suiRpc<T>(method: string, params: unknown[]): Promise<T> {
-  const res = await fetch(SUI_RPC_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method,
-      params,
-    }),
+export const suiClient = new SuiClient({ url: SUI_RPC_URL });
+
+export interface AccessPurchaseEvent {
+  campaignId: string;
+  videoId: string; // as hex string
+  buyer: string;
+  creator: string;
+  platformTreasury: string;
+  totalAmountMist: string;
+  creatorAmountMist: string;
+  platformFeeMist: string;
+  platformFeeBps: number;
+  durationHours: number;
+  expirationTimestampMs: number;
+}
+
+/**
+ * Find all AccessPurchased events for a given buyer (address)
+ */
+export async function getAccessEventsForBuyer(
+  buyerAddress: string,
+  packageId: string
+): Promise<AccessPurchaseEvent[]> {
+  const events = await suiClient.queryEvents({
+    query: {
+      MoveEventType: `${packageId}::private_tube::AccessPurchased`,
+    },
+    limit: 100,
   });
 
-  if (!res.ok) {
-    throw new Error(`Sui RPC error: ${res.status}`);
-  }
-
-  const data = await res.json();
-  if (data.error) {
-    throw new Error(`Sui RPC error: ${JSON.stringify(data.error)}`);
-  }
-
-  return data.result as T;
-}
-
-// ─── Transaction Verification ─────────────────────────────────────────────────
-
-export interface PaymentVerification {
-  valid: boolean;
-  senderAddress?: string;
-  recipientAddress?: string;
-  amountMist?: bigint;
-  error?: string;
-}
-
-interface SuiTransactionBlock {
-  effects?: {
-    status?: { status: string; error?: string };
-  };
-  transaction?: {
-    data?: { sender?: string };
-  };
-  balanceChanges?: Array<{
-    owner: unknown;
-    coinType: string;
-    amount: string;
-  }>;
+  return events.data
+    .filter((event) => {
+      const parsed = event.parsedJson as any;
+      return parsed.buyer === buyerAddress;
+    })
+    .map((event) => {
+      const parsed = event.parsedJson as any;
+      return {
+        campaignId: parsed.campaign_id,
+        videoId: parsed.video_id, // hex string
+        buyer: parsed.buyer,
+        creator: parsed.creator,
+        platformTreasury: parsed.platform_treasury,
+        totalAmountMist: parsed.total_amount_mist,
+        creatorAmountMist: parsed.creator_amount_mist,
+        platformFeeMist: parsed.platform_fee_mist,
+        platformFeeBps: parsed.platform_fee_bps,
+        durationHours: parsed.duration_hours,
+        expirationTimestampMs: parsed.expiration_timestamp_ms,
+      };
+    });
 }
 
 /**
- * Verify a SUI payment transaction
- * Checks that the transaction exists and sent funds to the expected address
+ * Check if a buyer has active access for a video by checking on-chain events
  */
-export async function verifyPaymentTransaction(
-  txDigest: string,
-  expectedSender: string,
-  expectedRecipient: string,
-  expectedAmountMist: bigint
-): Promise<PaymentVerification> {
-  // Allow mock payments in development
-  if (
-    process.env.ALLOW_MOCK_PAYMENT === "true" &&
-    process.env.NODE_ENV !== "production"
-  ) {
-    if (txDigest.startsWith("MOCK_")) {
-      return {
-        valid: true,
-        senderAddress: expectedSender,
-        recipientAddress: expectedRecipient,
-        amountMist: expectedAmountMist,
-      };
-    }
+export async function checkAccessOnChain(
+  buyerAddress: string,
+  videoId: string,
+  packageId: string
+): Promise<{ hasAccess: boolean; expiresAt: number | null }> {
+  const events = await getAccessEventsForBuyer(buyerAddress, packageId);
+
+  // Convert videoId string to hex bytes (matching Move's vector<u8>)
+  const videoIdHex = Buffer.from(videoId, "utf-8").toString("hex");
+
+  // Find events for this video that haven't expired
+  const now = Date.now();
+  const validEvents = events.filter(
+    (event) =>
+      event.videoId === videoIdHex && event.expirationTimestampMs > now
+  );
+
+  if (validEvents.length === 0) {
+    return { hasAccess: false, expiresAt: null };
   }
 
-  try {
-    const tx = await suiRpc<SuiTransactionBlock>(
-      "sui_getTransactionBlock",
-      [
-        txDigest,
-        {
-          showEffects: true,
-          showInput: true,
-          showBalanceChanges: true,
-        },
-      ]
-    );
+  // Find the latest expiration time
+  const latestExpiration = Math.max(
+    ...validEvents.map((e) => e.expirationTimestampMs)
+  );
 
-    if (!tx) {
-      return { valid: false, error: "Transaction not found" };
-    }
-
-    // Check transaction status
-    if (tx.effects?.status?.status !== "success") {
-      return {
-        valid: false,
-        error: `Transaction failed: ${tx.effects?.status?.error}`,
-      };
-    }
-
-    // Check sender
-    const sender = tx.transaction?.data?.sender;
-    if (sender?.toLowerCase() !== expectedSender.toLowerCase()) {
-      return {
-        valid: false,
-        error: `Sender mismatch: expected ${expectedSender}, got ${sender}`,
-      };
-    }
-
-    // Check balance changes for payment to creator/treasury
-    const balanceChanges = tx.balanceChanges || [];
-    let totalSentToRecipient = 0n;
-
-    for (const change of balanceChanges) {
-      if (
-        change.owner &&
-        typeof change.owner === "object" &&
-        "AddressOwner" in change.owner
-      ) {
-        const addr = (change.owner as { AddressOwner: string }).AddressOwner;
-        if (addr.toLowerCase() === expectedRecipient.toLowerCase()) {
-          const amount = BigInt(change.amount);
-          if (amount > 0n) {
-            totalSentToRecipient += amount;
-          }
-        }
-      }
-    }
-
-    // Allow 1% tolerance for gas
-    const tolerance = expectedAmountMist / 100n;
-    if (totalSentToRecipient < expectedAmountMist - tolerance) {
-      return {
-        valid: false,
-        error: `Insufficient payment: expected ${expectedAmountMist} MIST, got ${totalSentToRecipient} MIST`,
-      };
-    }
-
-    return {
-      valid: true,
-      senderAddress: sender,
-      recipientAddress: expectedRecipient,
-      amountMist: totalSentToRecipient,
-    };
-  } catch (err) {
-    console.error("Transaction verification error:", err);
-    return {
-      valid: false,
-      error: err instanceof Error ? err.message : "Verification failed",
-    };
-  }
-}
-
-/**
- * Get current Sui epoch
- */
-export async function getCurrentEpoch(): Promise<number> {
-  try {
-    const state = await suiRpc<{ epoch: string }>(
-      "suix_getLatestSuiSystemState",
-      []
-    );
-    return parseInt(state.epoch);
-  } catch {
-    return 0;
-  }
-}
-
-/**
- * Format Sui address for display (truncated)
- */
-export function formatAddress(address: string): string {
-  if (!address || address.length < 10) return address;
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
-}
-
-/**
- * Validate Sui address format
- */
-export function isValidSuiAddress(address: string): boolean {
-  return /^0x[a-fA-F0-9]{64}$/.test(address);
+  return { hasAccess: true, expiresAt: latestExpiration };
 }

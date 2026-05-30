@@ -1,12 +1,12 @@
 "use client";
 
 /**
- * PayButton — Slush Wallet Payment
+ * PayButton — Slush Wallet Payment via private_tube::purchase_access
  *
  * Flow:
  * 1. If wallet not connected → show "Connect Slush Wallet" button
  * 2. Once connected → show price confirmation
- * 3. On confirm → build a SUI transfer Transaction and sign+execute via Slush
+ * 3. On confirm → call private_tube::purchase_access Move transaction
  * 4. On success → call onSuccess(txDigest)
  */
 
@@ -22,6 +22,7 @@ interface PayButtonProps {
   videoId: string;
   priceMist: string;
   creatorAddress: string;
+  campaignId?: string; // Optional, if not provided we'll need to find it
   onSuccess: (txDigest: string) => void;
   disabled?: boolean;
   label?: string;
@@ -31,6 +32,7 @@ export function PayButton({
   videoId,
   priceMist,
   creatorAddress,
+  campaignId,
   onSuccess,
   disabled = false,
   label,
@@ -47,6 +49,8 @@ export function PayButton({
   const isConnected = connection.isConnected;
   const priceSui = (Number(BigInt(priceMist)) / 1_000_000_000).toFixed(4);
   const btnLabel = label ?? `Pay ${formatSui(priceMist)} SUI`;
+  const packageId = process.env.NEXT_PUBLIC_PACKAGE_ID;
+  const platformConfigAddress = process.env.NEXT_PUBLIC_PLATFORM_CONFIG_ADDRESS;
 
   // ── Step 1: Connect wallet ────────────────────────────────────────────────
   const handleConnect = async () => {
@@ -93,18 +97,29 @@ export function PayButton({
     try {
       const tx = new Transaction();
 
-      // Transfer priceMist MIST to the creator
-      const [coin] = tx.splitCoins(tx.gas, [BigInt(priceMist)]);
-      tx.transferObjects([coin], creatorAddress);
+      // Convert videoId string to byte vector (utf8)
+      const videoIdBytes = Array.from(new TextEncoder().encode(videoId));
+
+      // 1. Split coin for the exact price
+      const [paymentCoin] = tx.splitCoins(tx.gas, [BigInt(priceMist)]);
+
+      // 2. Call private_tube::purchase_access
+      tx.moveCall({
+        target: `${packageId}::private_tube::purchase_access`,
+        arguments: [
+          tx.object(platformConfigAddress!), // PlatformConfig shared object
+          tx.object(campaignId!), // Campaign shared object
+          paymentCoin, // Payment coin
+        ],
+      });
 
       const result = await kit.signAndExecuteTransaction({ transaction: tx });
-      // result is a discriminated union: { $kind: "Transaction", Transaction: { digest, ... } }
       const digest =
         result.$kind === "Transaction"
           ? result.Transaction.digest
           : (result as unknown as { digest: string }).digest;
 
-      toast.success("Payment confirmed on Sui testnet!");
+      toast.success("Payment confirmed on Sui blockchain!");
       onSuccess(digest);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -167,7 +182,7 @@ export function PayButton({
           </p>
         )}
         <p style={{ fontSize: "0.8125rem", color: "#94a3b8", marginBottom: "0.875rem" }}>
-          Pay <strong style={{ color: "#a855f7" }}>{priceSui} SUI</strong> for time-limited access on Sui testnet
+          Pay <strong style={{ color: "#a855f7" }}>{priceSui} SUI</strong> for time-limited access (tamper-proof on Sui blockchain)
         </p>
         <div style={{ display: "flex", gap: "0.625rem" }}>
           <button

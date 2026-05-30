@@ -43,7 +43,7 @@ export function CreateVideoForm() {
   const [errors, setErrors] = useState<FormErrors>({});
   const [loading, setLoading] = useState(false);
   const [connecting, setConnecting] = useState(false);
-  const [storingOnChain, setStoringOnChain] = useState(false);
+  const [creatingCampaign, setCreatingCampaign] = useState(false);
   const [ipfsVideo, setIpfsVideo] = useState<CreatedVideo | null>(null);
   const [created, setCreated] = useState<CreatedVideo | null>(null);
   const [copiedCid, setCopiedCid] = useState(false);
@@ -53,6 +53,7 @@ export function CreateVideoForm() {
   const kit = useDAppKit(dAppKit);
 
   const isConnected = connection.isConnected;
+  const packageId = process.env.NEXT_PUBLIC_PACKAGE_ID;
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -90,36 +91,43 @@ export function CreateVideoForm() {
     }
   };
 
-  const storeCidOnSui = async (videoId: string, cid: string) => {
-    setStoringOnChain(true);
+  const createOnChainCampaign = async (videoId: string, priceMist: bigint, durationHours: bigint): Promise<string> => {
+    setCreatingCampaign(true);
     try {
       const tx = new Transaction();
-      // Store the IPFS CID on Sui chain
-      // First, split a small amount of gas to create an object, or just use transaction metadata
-      const [coin] = tx.splitCoins(tx.gas, [tx.pure.u64(1000)]);
-      
-      // Transfer the tiny coin (this creates a transaction on-chain)
-      // The CID will be visible in the transaction history
-      tx.transferObjects([coin], tx.pure.address(kit.currentWallet?.accounts[0]?.address || ""));
-      
-      tx.setSender(kit.currentWallet?.accounts[0]?.address || "");
-      tx.setGasBudget(BigInt(10000000)); // 0.01 SUI
+
+      // Convert videoId string to byte vector (utf8)
+      const videoIdBytes = Array.from(new TextEncoder().encode(videoId));
+
+      // Call private_tube::create_campaign
+      tx.moveCall({
+        target: `${packageId}::private_tube::create_campaign`,
+        arguments: [
+          tx.pure.vector("u8", videoIdBytes),
+          tx.pure.u64(priceMist),
+          tx.pure.u64(durationHours),
+        ],
+      });
 
       const result = await kit.signAndExecuteTransaction({ transaction: tx });
-      console.log("[CreateVideoForm] Sui transaction result:", result);
-      toast.success("IPFS CID stored on Sui chain!");
-      return true;
+      const digest =
+        result.$kind === "Transaction"
+          ? result.Transaction.digest
+          : (result as unknown as { digest: string }).digest;
+
+      toast.success("Campaign created on Sui blockchain!");
+      return digest;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.toLowerCase().includes("cancel") || msg.toLowerCase().includes("reject")) {
-        toast.info("On-chain storage cancelled.");
+        toast.info("Campaign creation cancelled.");
       } else {
-        console.error("[CreateVideoForm] store on-chain error:", err);
-        toast.error("Failed to store CID on Sui chain.");
+        console.error("[CreateVideoForm] on-chain error:", err);
+        toast.error("Failed to create campaign on Sui. Please try again.");
       }
-      return false;
+      throw err;
     } finally {
-      setStoringOnChain(false);
+      setCreatingCampaign(false);
     }
   };
 
@@ -160,7 +168,7 @@ export function CreateVideoForm() {
         </div>
         <div>
           <h2 style={{ fontSize: "1.5rem", fontWeight: 700, color: "#f8fafc" }}>Video Created!</h2>
-          <p style={{ color: "#64748b", marginTop: "0.375rem" }}>Encrypted on Pinata IPFS + stored on Sui chain!</p>
+          <p style={{ color: "#64748b", marginTop: "0.375rem" }}>Encrypted on Pinata IPFS + campaign created on Sui blockchain!</p>
         </div>
 
         <div className="stack-sm" style={{ textAlign: "left" }}>
@@ -209,7 +217,7 @@ export function CreateVideoForm() {
         </div>
         <div>
           <h2 style={{ fontSize: "1.5rem", fontWeight: 700, color: "#f8fafc" }}>Video Uploaded to Pinata IPFS!</h2>
-          <p style={{ color: "#64748b", marginTop: "0.375rem" }}>Now optionally store the IPFS CID on Sui chain!</p>
+          <p style={{ color: "#64748b", marginTop: "0.375rem" }}>Now create your campaign on Sui blockchain for tamper-proof storage!</p>
         </div>
 
         <div className="stack-sm" style={{ textAlign: "left" }}>
@@ -224,41 +232,29 @@ export function CreateVideoForm() {
           ))}
         </div>
 
-        <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+        {!isConnected ? (
           <button
-            onClick={() => {
+            onClick={handleConnect}
+            disabled={connecting}
+            className="btn btn-primary btn-full"
+          >
+            {connecting ? "Connecting..." : "Connect Slush Wallet"}
+          </button>
+        ) : (
+          <button
+            onClick={async () => {
+              const priceMist = BigInt(Math.floor(parseFloat(form.priceSui) * 1_000_000_000));
+              const durationHours = BigInt(parseFloat(form.durationHours));
+              await createOnChainCampaign(ipfsVideo.videoId, priceMist, durationHours);
               setCreated(ipfsVideo);
               setIpfsVideo(null);
             }}
-            className="btn btn-outline"
-            style={{ flex: 1 }}
+            disabled={creatingCampaign}
+            className="btn btn-primary btn-full"
           >
-            Skip On-Chain
+            {creatingCampaign ? "Creating Campaign On Sui..." : "Create Campaign On Sui Blockchain"}
           </button>
-          {!isConnected ? (
-            <button
-              onClick={handleConnect}
-              disabled={connecting}
-              className="btn btn-primary"
-              style={{ flex: 1 }}
-            >
-              {connecting ? "Connecting..." : "Connect Slush Wallet"}
-            </button>
-          ) : (
-            <button
-              onClick={async () => {
-                await storeCidOnSui(ipfsVideo.videoId, ipfsVideo.cid);
-                setCreated(ipfsVideo);
-                setIpfsVideo(null);
-              }}
-              disabled={storingOnChain}
-              className="btn btn-primary"
-              style={{ flex: 1 }}
-            >
-              {storingOnChain ? "Storing on Sui..." : "Store CID on Sui"}
-            </button>
-          )}
-        </div>
+        )}
       </div>
     );
   }
@@ -287,7 +283,7 @@ export function CreateVideoForm() {
       <div>
         <label className="label" htmlFor="youtubeUrl">YouTube URL (Unlisted) *</label>
         <input id="youtubeUrl" name="youtubeUrl" type="url" value={form.youtubeUrl} onChange={handleChange}
-          placeholder="https://www.youtube.com/watch?v=..."
+          placeholder="https://www.youtube.com/watch?v="
           className={`input${errors.youtubeUrl ? " input-error" : ""}`}
           style={{ fontFamily: "monospace", fontSize: "0.875rem" }} />
         {errors.youtubeUrl && <p className="field-error">{errors.youtubeUrl}</p>}
@@ -334,7 +330,7 @@ export function CreateVideoForm() {
           <ul style={{ fontSize: "0.8125rem", color: "#64748b", lineHeight: 1.7, paddingLeft: "1rem" }}>
             <li>YouTube URL encrypted with AES-256-GCM</li>
             <li>Encrypted metadata stored directly on Pinata IPFS</li>
-            <li>Optionally store IPFS CID on Sui chain</li>
+            <li>Campaign created on Sui blockchain (tamper-proof)</li>
             <li>Revenue cap: $20 USD gross per video</li>
             <li>Platform fee: 10% · Creator earnings: 90%</li>
           </ul>
