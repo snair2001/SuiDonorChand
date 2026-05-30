@@ -77,6 +77,7 @@ export async function POST(req: NextRequest) {
             durationMs: metadata.durationMs,
           });
           
+          // Return 200 OK when we grant access to avoid any confusion
           return NextResponse.json({
             success: true,
             access: {
