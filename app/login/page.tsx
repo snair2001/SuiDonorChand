@@ -9,8 +9,12 @@ const ERROR_MESSAGES: Record<string, string> = {
   oauth_config_error: "Google OAuth is not configured. Check environment variables.",
   oauth_denied: "Google login was cancelled.",
   no_code: "No authorization code received from Google.",
-  no_id_token: "Failed to get ID token from Google.",
+  url_parse_failed: "Failed to parse the callback URL.",
+  token_exchange_failed: "Failed to exchange code for Google tokens. Check Google OAuth credentials or redirect URI.",
+  jwt_decode_failed: "Failed to decode Google's JWT token.",
   email_not_verified: "Your Google email is not verified.",
+  address_gen_failed: "Failed to generate Sui address.",
+  session_create_failed: "Failed to create user session.",
   auth_failed: "Authentication failed. Please try again.",
 };
 
