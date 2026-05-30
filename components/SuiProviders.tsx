@@ -8,7 +8,6 @@
 
 import { createDAppKit } from "@mysten/dapp-kit-core";
 import { DAppKitProvider } from "@mysten/dapp-kit-react";
-import { registerSlushWallet } from "@mysten/slush-wallet";
 import { SuiJsonRpcClient, getJsonRpcFullnodeUrl } from "@mysten/sui/jsonRpc";
 
 const NETWORK = (process.env.NEXT_PUBLIC_SUI_NETWORK ?? "testnet") as
@@ -27,12 +26,6 @@ const dAppKit = createDAppKit({
   defaultNetwork: NETWORK,
   slushWalletConfig: { appName: "PrivateTube Access Gate" },
 });
-
-// Register Slush at module level so it's available before any component renders.
-// Guard with typeof window to avoid SSR errors.
-if (typeof window !== "undefined") {
-  registerSlushWallet("PrivateTube Access Gate");
-}
 
 export function SuiProviders({ children }: { children: React.ReactNode }) {
   return <DAppKitProvider dAppKit={dAppKit}>{children}</DAppKitProvider>;
