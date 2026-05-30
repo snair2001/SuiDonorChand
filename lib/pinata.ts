@@ -152,6 +152,7 @@ export async function getJsonFromCid<T = unknown>(cid: string): Promise<T> {
 export async function findLatestFileByMetadataName(
   name: string
 ): Promise<{ cid: string; createdAt: string } | null> {
+  console.log("[pinata/findLatestFileByMetadataName] Searching for:", name);
   const jwt = getPinataJwt();
 
   const params = new URLSearchParams({
@@ -168,6 +169,7 @@ export async function findLatestFileByMetadataName(
 
   if (!res.ok) {
     const err = await res.text();
+    console.error("[pinata/findLatestFileByMetadataName] Pinata search failed:", err);
     throw new Error(`Pinata search failed: ${err}`);
   }
 
@@ -177,6 +179,8 @@ export async function findLatestFileByMetadataName(
     date_pinned: string;
   }>;
 
+  console.log("[pinata/findLatestFileByMetadataName] Found rows:", rows?.length);
+
   if (!rows || rows.length === 0) return null;
 
   // Sort by date_pinned descending
@@ -185,7 +189,9 @@ export async function findLatestFileByMetadataName(
       new Date(b.date_pinned).getTime() - new Date(a.date_pinned).getTime()
   );
 
-  return { cid: rows[0].ipfs_pin_hash, createdAt: rows[0].date_pinned };
+  const found = { cid: rows[0].ipfs_pin_hash, createdAt: rows[0].date_pinned };
+  console.log("[pinata/findLatestFileByMetadataName] Found latest:", found);
+  return found;
 }
 
 // ─── Registry Functions ───────────────────────────────────────────────────────
@@ -354,6 +360,7 @@ export async function findActiveAccess(
   videoId: string,
   viewerEmail?: string
 ): Promise<AccessRecord | null> {
+  console.log("[pinata/findActiveAccess] Checking:", { viewerAddress, videoId, viewerEmail });
   const addrKey = `access-${viewerAddress}-${videoId}`;
   const emailKey = viewerEmail
     ? `access-email-${viewerEmail.replace(/[@.]/g, "_")}-${videoId}`
@@ -363,18 +370,25 @@ export async function findActiveAccess(
     (await findLatestFileByMetadataName(addrKey)) ??
     (emailKey ? await findLatestFileByMetadataName(emailKey) : null);
 
-  if (!latest) return null;
+  if (!latest) {
+    console.log("[pinata/findActiveAccess] No access record found");
+    return null;
+  }
 
   try {
     const record = await getJsonFromCid<AccessRecord>(latest.cid);
+    console.log("[pinata/findActiveAccess] Found record, checking expiry...", record.accessExpiresAt);
     const now = new Date();
     const expiry = new Date(record.accessExpiresAt);
 
     if (expiry > now) {
+      console.log("[pinata/findActiveAccess] Access is active!");
       return record;
     }
+    console.log("[pinata/findActiveAccess] Access expired");
     return null; // expired
-  } catch {
+  } catch (e) {
+    console.error("[pinata/findActiveAccess] Error fetching record:", e);
     return null;
   }
 }
@@ -388,6 +402,7 @@ export async function findAnyAccess(
   videoId: string,
   viewerEmail?: string
 ): Promise<AccessRecord | null> {
+  console.log("[pinata/findAnyAccess] Checking:", { viewerAddress, videoId, viewerEmail });
   const addrKey = `access-${viewerAddress}-${videoId}`;
   const emailKey = viewerEmail
     ? `access-email-${viewerEmail.replace(/[@.]/g, "_")}-${videoId}`
@@ -397,11 +412,17 @@ export async function findAnyAccess(
     (await findLatestFileByMetadataName(addrKey)) ??
     (emailKey ? await findLatestFileByMetadataName(emailKey) : null);
 
-  if (!latest) return null;
+  if (!latest) {
+    console.log("[pinata/findAnyAccess] No access record found");
+    return null;
+  }
 
   try {
-    return await getJsonFromCid<AccessRecord>(latest.cid);
-  } catch {
+    const record = await getJsonFromCid<AccessRecord>(latest.cid);
+    console.log("[pinata/findAnyAccess] Found record:", record);
+    return record;
+  } catch (e) {
+    console.error("[pinata/findAnyAccess] Error fetching record:", e);
     return null;
   }
 }
@@ -451,6 +472,7 @@ export async function createPurchaseRecord(
   purchaseData: PurchaseRecord
 ): Promise<string> {
   const name = `purchase-${purchaseData.videoId}-${purchaseData.txDigest}`;
+  console.log("[pinata/createPurchaseRecord] Creating purchase record with name:", name);
   return uploadJsonToPinata(purchaseData, name);
 }
 
@@ -462,6 +484,9 @@ export async function isPurchaseDuplicate(
   txDigest: string
 ): Promise<boolean> {
   const name = `purchase-${videoId}-${txDigest}`;
+  console.log("[pinata/isPurchaseDuplicate] Checking for:", name);
   const existing = await findLatestFileByMetadataName(name);
-  return existing !== null;
+  const isDupe = existing !== null;
+  console.log("[pinata/isPurchaseDuplicate] Is duplicate?", isDupe);
+  return isDupe;
 }

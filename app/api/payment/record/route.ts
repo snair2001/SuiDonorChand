@@ -45,6 +45,54 @@ export async function POST(req: NextRequest) {
         console.log("[payment/record] Finding existing access...");
         const existingAccess = await findAnyAccess(user.suiAddress, videoId, user.email);
         console.log("[payment/record] Existing access found?", !!existingAccess);
+        
+        // If no access record found, but purchase is duplicate, still grant access!
+        if (!existingAccess) {
+          console.log("[payment/record] Duplicate purchase but no access found—granting access now!");
+          
+          // Fetch video metadata again to grant access
+          const result = await getVideoMetadata(videoId);
+          if (!result) {
+            return NextResponse.json({ error: "Video not found" }, { status: 404 });
+          }
+          const { metadata, cid: videoCid } = result;
+          
+          // Calculate payment amounts (server-side only)
+          const paymentAmountMist = BigInt(metadata.priceMist);
+          const paymentAmountUsd = await mistToUsd(paymentAmountMist);
+          const platformFeePercentage = parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || "10");
+          const { platformFeeUsd, creatorAmountUsd } = calculateFees(paymentAmountUsd, platformFeePercentage);
+          
+          // Grant access now!
+          const access = await grantAccess({
+            videoId,
+            videoCid,
+            viewerEmail: user.email,
+            viewerAddress: user.suiAddress,
+            txDigest,
+            paymentAmountMist: paymentAmountMist.toString(),
+            paymentAmountUsd,
+            creatorAmountUsd,
+            platformFeeUsd,
+            durationMs: metadata.durationMs,
+          });
+          
+          return NextResponse.json({
+            success: true,
+            access: {
+              hasAccess: true,
+              expiresAt: access.accessExpiresAt,
+              videoId,
+            },
+            payment: {
+              paymentAmountUsd,
+              creatorAmountUsd,
+              platformFeeUsd,
+              txDigest,
+            },
+          });
+        }
+        
         return NextResponse.json(
           {
             error: "Transaction already processed",
