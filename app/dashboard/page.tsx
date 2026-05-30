@@ -25,6 +25,7 @@ export default function DashboardPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [copiedCid, setCopiedCid] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
+  const [grantingAccess, setGrantingAccess] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/auth/session").then(r => r.json()).then(async data => {
@@ -69,6 +70,33 @@ export default function DashboardPage() {
       alert("Failed to reset data");
     } finally {
       setResetting(false);
+    }
+  };
+
+  const handleGrantAccess = async (videoId: string) => {
+    if (!confirm("Grant yourself admin access to this video for 24 hours?")) {
+      return;
+    }
+    setGrantingAccess(videoId);
+    try {
+      const res = await fetch("/api/admin/grant-access", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert("Access granted successfully! Now you can watch the video!");
+        // Redirect to watch page
+        window.location.href = `/watch/${videoId}`;
+      } else {
+        alert(data.error || "Failed to grant access");
+      }
+    } catch (err) {
+      console.error("Grant access error:", err);
+      alert("Failed to grant access");
+    } finally {
+      setGrantingAccess(null);
     }
   };
 
@@ -199,7 +227,23 @@ export default function DashboardPage() {
 
                     {expandedId === video.videoId && (
                       <div style={{ marginTop: "1.25rem", paddingTop: "1.25rem", borderTop: "1px solid rgba(255,255,255,0.07)" }} className="stack-sm">
-                        <p style={{ fontSize: "0.75rem", color: "#475569" }}>IPFS CID</p>
+                        <div style={{ display: "flex", gap: "0.625rem", flexWrap: "wrap" }}>
+                          {user.isAdmin && (
+                            <button
+                              onClick={() => handleGrantAccess(video.videoId)}
+                              disabled={grantingAccess === video.videoId}
+                              className="btn btn-outline btn-sm"
+                              style={{ borderColor: "#4ade80", color: "#4ade80" }}
+                            >
+                              {grantingAccess === video.videoId ? "Granting Access..." : "🔓 Grant Access (Admin)"}
+                            </button>
+                          )}
+                          <Link href={`/watch/${video.videoId}`} className="btn btn-outline btn-sm">
+                            Watch Video
+                          </Link>
+                        </div>
+
+                        <p style={{ fontSize: "0.75rem", color: "#475569", marginTop: "0.5rem" }}>IPFS CID</p>
                         <div style={{ display: "flex", alignItems: "center", gap: "0.625rem" }}>
                           <code className="mono" style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{video.cid}</code>
                           <button onClick={() => copyCid(video.cid)} style={{ fontSize: "0.75rem", color: copiedCid === video.cid ? "#4ade80" : "#6366f1", background: "none", border: "none", cursor: "pointer", whiteSpace: "nowrap" }}>
