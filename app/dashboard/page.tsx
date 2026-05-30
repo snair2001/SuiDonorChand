@@ -24,6 +24,7 @@ export default function DashboardPage() {
   const [videosLoading, setVideosLoading] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [copiedCid, setCopiedCid] = useState<string | null>(null);
+  const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
     fetch("/api/auth/session").then(r => r.json()).then(async data => {
@@ -48,6 +49,29 @@ export default function DashboardPage() {
     setTimeout(() => setCopiedCid(null), 2000);
   };
 
+  const handleReset = async () => {
+    if (!confirm("Are you sure you want to reset ALL site data? This will delete all videos and cannot be undone!")) {
+      return;
+    }
+    setResetting(true);
+    try {
+      const res = await fetch("/api/admin/reset", { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        alert("All data reset successfully!");
+        // Refresh the page
+        window.location.reload();
+      } else {
+        alert(data.error || "Failed to reset data");
+      }
+    } catch (err) {
+      console.error("Reset error:", err);
+      alert("Failed to reset data");
+    } finally {
+      setResetting(false);
+    }
+  };
+
   if (loading) return <LoadingPage message="Loading dashboard..." />;
   if (!user) return null;
 
@@ -68,9 +92,21 @@ export default function DashboardPage() {
               </span>
             )}
           </div>
-          <Link href="/create" className="btn btn-primary">
-            + Create Video
-          </Link>
+          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+            {user.isAdmin && (
+              <button
+                onClick={handleReset}
+                disabled={resetting}
+                className="btn btn-outline"
+                style={{ borderColor: "#f87171", color: "#f87171" }}
+              >
+                {resetting ? "Resetting..." : "🔄 Reset All Data"}
+              </button>
+            )}
+            <Link href="/create" className="btn btn-primary">
+              + Create Video
+            </Link>
+          </div>
         </div>
 
         <div className="sidebar-layout">
