@@ -26,6 +26,7 @@ export default function DashboardPage() {
   const [copiedCid, setCopiedCid] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
   const [grantingAccess, setGrantingAccess] = useState<string | null>(null);
+  const [debugging, setDebugging] = useState(false);
 
   useEffect(() => {
     fetch("/api/auth/session").then(r => r.json()).then(async data => {
@@ -100,6 +101,33 @@ export default function DashboardPage() {
     }
   };
 
+  const handleDebug = async () => {
+    if (!confirm("Run debug to check registry and latest video CID?")) {
+      return;
+    }
+    setDebugging(true);
+    try {
+      const firstVideo = videos[0];
+      if (!firstVideo) {
+        alert("No videos to debug! Create one first!");
+        return;
+      }
+      const res = await fetch("/api/debug", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cid: firstVideo.cid }),
+      });
+      const data = await res.json();
+      console.log("DEBUG RESULTS:", data);
+      alert("Debug complete! Check browser console and Vercel logs!");
+    } catch (err) {
+      console.error("Debug error:", err);
+      alert("Debug failed");
+    } finally {
+      setDebugging(false);
+    }
+  };
+
   if (loading) return <LoadingPage message="Loading dashboard..." />;
   if (!user) return null;
 
@@ -122,14 +150,24 @@ export default function DashboardPage() {
           </div>
           <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
             {user.isAdmin && (
-              <button
-                onClick={handleReset}
-                disabled={resetting}
-                className="btn btn-outline"
-                style={{ borderColor: "#f87171", color: "#f87171" }}
-              >
-                {resetting ? "Resetting..." : "🔄 Reset All Data"}
-              </button>
+              <>
+                <button
+                  onClick={handleDebug}
+                  disabled={debugging || videos.length === 0}
+                  className="btn btn-outline"
+                  style={{ borderColor: "#6366f1", color: "#6366f1" }}
+                >
+                  {debugging ? "Debugging..." : "🔍 Debug"}
+                </button>
+                <button
+                  onClick={handleReset}
+                  disabled={resetting}
+                  className="btn btn-outline"
+                  style={{ borderColor: "#f87171", color: "#f87171" }}
+                >
+                  {resetting ? "Resetting..." : "🔄 Reset All Data"}
+                </button>
+              </>
             )}
             <Link href="/create" className="btn btn-primary">
               + Create Video
