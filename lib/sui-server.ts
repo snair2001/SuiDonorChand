@@ -45,6 +45,8 @@ export async function getCampaigns(): Promise<SafeVideoMetadata[]> {
       options: { showContent: true },
     });
 
+    console.log("[server:getCampaigns] Registry object:", JSON.stringify(registryObj, null, 2));
+
     if (registryObj.data?.content?.dataType !== "moveObject") {
       return [];
     }
@@ -53,18 +55,41 @@ export async function getCampaigns(): Promise<SafeVideoMetadata[]> {
     let campaignIds: string[] = [];
 
     if (content.campaigns) {
-      if (content.campaigns.fields?.contents) {
-        const contents = content.campaigns.fields.contents as any[];
+      const campaigns = content.campaigns;
+      console.log("[server:getCampaigns] campaigns raw:", JSON.stringify(campaigns, null, 2));
+      
+      let contents: any[] = [];
+      
+      // Try all possible VecMap structures
+      if (campaigns?.fields?.contents) {
+        contents = campaigns.fields.contents;
+      } else if (campaigns?.contents) {
+        contents = campaigns.contents;
+      } else if (campaigns?.fields) {
+        // Maybe fields is the contents?
+        contents = campaigns.fields;
+      } else if (Array.isArray(campaigns)) {
+        contents = campaigns;
+      }
+
+      console.log("[server:getCampaigns] extracted contents:", JSON.stringify(contents, null, 2));
+
+      if (Array.isArray(contents)) {
         campaignIds = contents
-          .map((c) => c?.fields?.value || c?.value)
-          .filter((id): id is string => id != null);
-      } else if (content.campaigns.contents) {
-        const contents = content.campaigns.contents as any[];
-        campaignIds = contents
-          .map((c) => c?.fields?.value || c?.value)
-          .filter((id): id is string => id != null);
+          .map((c) => {
+            console.log("[server:getCampaigns] processing entry:", JSON.stringify(c, null, 2));
+            // Try all possible ways to get the value
+            if (c?.fields?.value) return c.fields.value;
+            if (c?.value) return c.value;
+            if (c?.fields?.key?.value) return c.fields.key.value;
+            if (typeof c === 'string') return c;
+            return null;
+          })
+          .filter((id): id is string => id != null && id.length > 0);
       }
     }
+
+    console.log("[server:getCampaigns] Final campaign IDs:", campaignIds);
 
     if (campaignIds.length === 0) {
       return [];
@@ -74,6 +99,8 @@ export async function getCampaigns(): Promise<SafeVideoMetadata[]> {
       ids: campaignIds,
       options: { showContent: true },
     });
+
+    console.log("[server:getCampaigns] Campaign objects:", JSON.stringify(campaignObjects, null, 2));
 
     return campaignObjects
       .filter((obj) => {
@@ -89,20 +116,42 @@ export async function getCampaigns(): Promise<SafeVideoMetadata[]> {
       .map((obj) => {
         const content = obj.data!.content as any;
         const fields = content.fields;
+        console.log("[server:getCampaigns] Campaign fields:", JSON.stringify(fields, null, 2));
+
+        const videoId = fields.video_id 
+          ? (typeof fields.video_id === 'string' ? fields.video_id : Buffer.from(fields.video_id).toString())
+          : "";
+        
+        const title = fields.title 
+          ? (typeof fields.title === 'string' ? fields.title : Buffer.from(fields.title).toString())
+          : "";
+        
+        const description = fields.description 
+          ? (typeof fields.description === 'string' ? fields.description : Buffer.from(fields.description).toString())
+          : "";
+        
+        const disabledReason = fields.disabled_reason 
+          ? (typeof fields.disabled_reason === 'string' ? fields.disabled_reason : Buffer.from(fields.disabled_reason).toString() || null)
+          : null;
+        
+        const thumbnailVideoId = fields.thumbnail_video_id 
+          ? (typeof fields.thumbnail_video_id === 'string' ? fields.thumbnail_video_id : Buffer.from(fields.thumbnail_video_id).toString())
+          : "";
+
         return {
-          videoId: fields.video_id ? Buffer.from(fields.video_id).toString() : "",
+          videoId,
           campaignId: obj.data!.objectId,
-          title: fields.title ? Buffer.from(fields.title).toString() : "",
-          description: fields.description ? Buffer.from(fields.description).toString() : "",
+          title,
+          description,
           creatorAddress: fields.creator || "",
           priceMist: fields.price_mist?.toString() || "0",
           priceSui: fields.price_mist ? (Number(fields.price_mist) / 1e9).toFixed(4) : "0",
           durationHours: Number(fields.duration_hours) || 0,
           isDisabled: fields.is_disabled || false,
-          disabledReason: fields.disabled_reason ? Buffer.from(fields.disabled_reason).toString() || null : null,
+          disabledReason,
           totalPurchases: Number(fields.total_purchases) || 0,
           totalGrossMist: fields.total_gross_mist?.toString() || "0",
-          thumbnailVideoId: fields.thumbnail_video_id ? Buffer.from(fields.thumbnail_video_id).toString() : "",
+          thumbnailVideoId,
         };
       });
   } catch (error) {
