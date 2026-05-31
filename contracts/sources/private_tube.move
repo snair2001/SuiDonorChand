@@ -2,9 +2,9 @@ module private_tube::private_tube {
     use sui::coin::{Self, Coin};
     use sui::sui::SUI;
     use sui::transfer;
-    use sui::tx_context::TxContext;
+    use sui::tx_context::{Self, TxContext};
     use sui::event;
-    use sui::object::UID;
+    use sui::object::{Self, UID};
     use sui::dynamic_object_field as dof;
     use sui::vec_map::{Self, VecMap};
 
@@ -191,7 +191,7 @@ module private_tube::private_tube {
             };
 
             dof::add(&mut campaign.id, buyer, access_record);
-        }
+        };
 
         event::emit(AccessPurchased {
             campaign_id,
