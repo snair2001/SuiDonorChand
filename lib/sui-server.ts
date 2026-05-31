@@ -213,23 +213,18 @@ export async function checkAccess(campaignId: string, buyerAddress: string): Pro
       return { hasAccess: false, expiresAt: null };
     }
 
-    // Check dynamic fields for access record
-    const dynamicFields = await suiClient.getDynamicFields({
+    console.log("[checkAccess] Checking access for:", { campaignId, buyerAddress });
+
+    // Directly fetch dynamic field object with address key
+    const accessRecord = await suiClient.getDynamicFieldObject({
       parentId: campaignId,
+      name: {
+        type: "address",
+        value: buyerAddress,
+      },
     });
 
-    const accessField = dynamicFields.data?.find(
-      (field) => field.name?.value === buyerAddress
-    );
-
-    if (!accessField) {
-      return { hasAccess: false, expiresAt: null };
-    }
-
-    const accessRecord = await suiClient.getObject({
-      id: accessField.objectId,
-      options: { showContent: true },
-    });
+    console.log("[checkAccess] Access record result:", JSON.stringify(accessRecord, null, 2));
 
     if (accessRecord.data?.content?.dataType !== "moveObject") {
       return { hasAccess: false, expiresAt: null };
@@ -240,8 +235,11 @@ export async function checkAccess(campaignId: string, buyerAddress: string): Pro
     if (!fields) {
       return { hasAccess: false, expiresAt: null };
     }
+
     const expiresAtMs = Number(fields.expiration_timestamp_ms) || 0;
     const now = Date.now();
+
+    console.log("[checkAccess] Expiration check:", { expiresAtMs, now, isExpired: expiresAtMs <= now });
 
     if (expiresAtMs <= now) {
       return { hasAccess: false, expiresAt: expiresAtMs > 0 ? new Date(expiresAtMs).toISOString() : null };
