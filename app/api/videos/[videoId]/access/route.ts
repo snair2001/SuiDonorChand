@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
-import { checkAccess } from "@/lib/accessStore";
+import { getCampaignByVideoId, checkAccess as checkOnChainAccess } from "@/lib/sui-server";
 
 export async function GET(
   req: NextRequest,
@@ -18,11 +18,21 @@ export async function GET(
 
       console.log(`[access] Checking access for videoId=${videoId}, addr=${user.suiAddress}, email=${user.email}`);
 
-      const access = await checkAccess(user.suiAddress, videoId, user.email);
+      const campaign = await getCampaignByVideoId(videoId);
+      if (!campaign) {
+        return NextResponse.json({ hasAccess: false, expiresAt: null, isExpired: false });
+      }
 
-      console.log(`[access] Check result:`, access);
+      const access = await checkOnChainAccess(campaign.campaignId, user.suiAddress);
+      const isExpired = access.expiresAt ? new Date(access.expiresAt).getTime() <= Date.now() : false;
 
-      return NextResponse.json(access);
+      console.log(`[access] Check result:`, { ...access, isExpired });
+
+      return NextResponse.json({
+        hasAccess: access.hasAccess,
+        expiresAt: access.expiresAt,
+        isExpired: isExpired,
+      });
     } catch (err) {
       console.error("Check access error:", err);
       return NextResponse.json({ error: "Failed to check access" }, { status: 500 });

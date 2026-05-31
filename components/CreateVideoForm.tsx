@@ -3,6 +3,13 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { useWallets, useWalletConnection, useDAppKit } from "@mysten/dapp-kit-react";
+import { dAppKit } from "@/components/SuiProviders";
+import { Transaction } from "@mysten/sui/transactions";
+import { SLUSH_WALLET_NAME } from "@mysten/slush-wallet";
+import { encryptText } from "@/lib/encryption";
+import { validateYouTubeUrl, extractYouTubeId } from "@/lib/youtube";
+import { suiToMist } from "@/lib/pricing";
 
 const DURATION_OPTIONS = [
   { label: "1 Hour", value: 1 },
@@ -10,6 +17,9 @@ const DURATION_OPTIONS = [
   { label: "7 Days", value: 168 },
   { label: "30 Days", value: 720 },
 ];
+
+const PACKAGE_ID = process.env.NEXT_PUBLIC_PACKAGE_ID || "";
+const REGISTRY_ID = process.env.NEXT_PUBLIC_REGISTRY_ID || "";
 
 interface FormData {
   title: string;
@@ -27,9 +37,9 @@ interface FormErrors {
   durationHours?: string;
 }
 
-interface CreatedVideo {
+interface CreatedCampaign {
   videoId: string;
-  cid: string;
+  campaignId?: string;
   title: string;
 }
 
@@ -38,8 +48,12 @@ export function CreateVideoForm() {
   const [form, setForm] = useState<FormData>({ title: "", description: "", youtubeUrl: "", priceSui: "1", durationHours: "24" });
   const [errors, setErrors] = useState<FormErrors>({});
   const [loading, setLoading] = useState(false);
-  const [created, setCreated] = useState<CreatedVideo | null>(null);
-  const [copiedCid, setCopiedCid] = useState(false);
+  const [created, setCreated] = useState<CreatedCampaign | null>(null);
+  const [connecting, setConnecting] = useState(false);
+
+  const wallets = useWallets({ dAppKit });
+  const connection = useWalletConnection({ dAppKit: dAppKit as any });
+  const kit = useDAppKit(dAppKit);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -47,33 +61,117 @@ export function CreateVideoForm() {
     if (errors[name as keyof FormErrors]) setErrors(p => ({ ...p, [name]: undefined }));
   };
 
+  // ── Step 1: Connect wallet ─────────────────────────────────────────────
+  const handleConnect = async () => {
+    setConnecting(true);
+    try {
+      let slush = wallets.find((w) => w.name === SLUSH_WALLET_NAME);
+      if (!slush) {
+        for (let i = 0; i < 4; i++) {
+          await new Promise((r) => setTimeout(r, 500));
+          const fresh = kit.stores.$wallets.get();
+          slush = fresh.find((w) => w.name === SLUSH_WALLET_NAME) ?? fresh[0];
+          if (slush) break;
+        }
+      }
+
+      if (!slush) {
+        toast.error("Slush wallet not found. Make sure you are using a supported browser.");
+        return;
+      }
+
+      await kit.connectWallet({ wallet: slush });
+      toast.success("Slush wallet connected!");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.toLowerCase().includes("cancel") && !msg.toLowerCase().includes("reject")) {
+        toast.error("Failed to connect wallet. Please try again.");
+      }
+    } finally {
+      setConnecting(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setErrors({});
+
     try {
-      const res = await fetch("/api/videos/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: form.title, description: form.description, youtubeUrl: form.youtubeUrl, priceSui: parseFloat(form.priceSui), durationHours: parseFloat(form.durationHours) }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        if (data.errors) setErrors(data.errors);
-        else toast.error(data.error || "Failed to create video");
+      // Validate inputs
+      const newErrors: FormErrors = {};
+      if (!form.title.trim()) newErrors.title = "Title is required";
+      if (!form.description.trim()) newErrors.description = "Description is required";
+      
+      const ytValidation = validateYouTubeUrl(form.youtubeUrl);
+      if (!ytValidation.valid || !ytValidation.videoId) {
+        newErrors.youtubeUrl = ytValidation.error || "Invalid YouTube URL";
+      }
+      
+      const price = parseFloat(form.priceSui);
+      if (isNaN(price) || price <= 0) newErrors.priceSui = "Price must be greater than 0";
+      
+      const duration = parseInt(form.durationHours);
+      if (isNaN(duration) || duration <= 0) newErrors.durationHours = "Invalid duration";
+
+      if (Object.keys(newErrors).length > 0) {
+        setErrors(newErrors);
+        setLoading(false);
         return;
       }
-      setCreated(data.video);
-      toast.success("Video encrypted & uploaded to Pinata IPFS!");
-    } catch { toast.error("Network error. Please try again."); }
-    finally { setLoading(false); }
-  };
 
-  const copyCid = async () => {
-    if (!created) return;
-    await navigator.clipboard.writeText(created.cid);
-    setCopiedCid(true);
-    setTimeout(() => setCopiedCid(false), 2000);
+      // Encrypt YouTube URL
+      const encrypted = encryptText(form.youtubeUrl);
+
+      // Generate video ID
+      const videoId = crypto.randomUUID();
+      const thumbnailVideoId = ytValidation.videoId!;
+      const priceMist = suiToMist(price);
+      const durationHours = BigInt(duration);
+
+      // Create transaction
+      const tx = new Transaction();
+      tx.moveCall({
+        target: `${PACKAGE_ID}::private_tube::create_campaign`,
+        arguments: [
+          tx.object(REGISTRY_ID),
+          tx.pure.string(videoId),
+          tx.pure.u64(priceMist),
+          tx.pure.u64(durationHours),
+          tx.pure.string(form.title),
+          tx.pure.string(form.description),
+          tx.pure.string(thumbnailVideoId),
+          tx.pure.string(encrypted.encryptedText),
+          tx.pure.string(encrypted.iv),
+          tx.pure.string(encrypted.authTag),
+        ],
+      });
+
+      // Sign and execute transaction
+      const result = await kit.signAndExecuteTransaction({ transaction: tx });
+      const digest =
+        result.$kind === "Transaction"
+          ? result.Transaction.digest
+          : (result as unknown as { digest: string }).digest;
+
+      toast.success("Campaign created successfully!");
+      
+      setCreated({
+        videoId,
+        title: form.title,
+      });
+
+    } catch (err: unknown) {
+      console.error("Error creating campaign:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.toLowerCase().includes("cancel") || msg.toLowerCase().includes("reject")) {
+        toast.info("Transaction cancelled.");
+      } else {
+        toast.error("Failed to create campaign. Please try again.");
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (created) {
@@ -83,8 +181,8 @@ export function CreateVideoForm() {
           ✅
         </div>
         <div>
-          <h2 style={{ fontSize: "1.5rem", fontWeight: 700, color: "#f8fafc" }}>Video Created!</h2>
-          <p style={{ color: "#64748b", marginTop: "0.375rem" }}>Encrypted on Pinata IPFS!</p>
+          <h2 style={{ fontSize: "1.5rem", fontWeight: 700, color: "#f8fafc" }}>Campaign Created!</h2>
+          <p style={{ color: "#64748b", marginTop: "0.375rem" }}>Your video campaign is now live on Sui testnet!</p>
         </div>
 
         <div className="stack-sm" style={{ textAlign: "left" }}>
@@ -97,16 +195,6 @@ export function CreateVideoForm() {
               {item.mono ? <code className="mono" style={{ display: "block" }}>{item.value}</code> : <p style={{ color: "#f8fafc", fontWeight: 500 }}>{item.value}</p>}
             </div>
           ))}
-
-          <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: "0.875rem", padding: "1rem" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.375rem" }}>
-              <p style={{ fontSize: "0.75rem", color: "#475569" }}>IPFS CID</p>
-              <button onClick={copyCid} style={{ fontSize: "0.75rem", color: copiedCid ? "#4ade80" : "#6366f1", background: "none", border: "none", cursor: "pointer" }}>
-                {copiedCid ? "✓ Copied!" : "Copy"}
-              </button>
-            </div>
-            <code className="mono" style={{ display: "block", wordBreak: "break-all" }}>{created.cid}</code>
-          </div>
         </div>
 
         <div style={{ display: "flex", gap: "0.875rem" }}>
@@ -129,7 +217,7 @@ export function CreateVideoForm() {
     <form onSubmit={handleSubmit} className="stack-lg">
       {/* Title */}
       <div>
-        <label className="label" htmlFor="title">Video Title *</label>
+        <label className="label" htmlFor="title">Campaign Title *</label>
         <input id="title" name="title" type="text" value={form.title} onChange={handleChange}
           placeholder="Enter a descriptive title" maxLength={100}
           className={`input${errors.title ? " input-error" : ""}`} />
@@ -195,24 +283,47 @@ export function CreateVideoForm() {
           <p style={{ fontWeight: 600, marginBottom: "0.375rem", color: "#93c5fd" }}>How it works</p>
           <ul style={{ fontSize: "0.8125rem", color: "#64748b", lineHeight: 1.7, paddingLeft: "1rem" }}>
             <li>YouTube URL encrypted with AES-256-GCM</li>
-            <li>Encrypted metadata stored on Pinata IPFS</li>
+            <li>All data stored on-chain on Sui testnet</li>
             <li>Viewers pay with SUI via Slush Wallet</li>
-            <li>Revenue cap: $20 USD gross per video</li>
-            <li>Platform fee: 10% · Creator earnings: 90%</li>
           </ul>
         </div>
       </div>
 
-      <button type="submit" disabled={loading} className="btn btn-primary btn-lg btn-full">
-        {loading ? (
-          <>
-            <div className="spinner spinner-sm" style={{ borderColor: "rgba(255,255,255,0.2)", borderTopColor: "#fff" }} />
-            Encrypting &amp; Uploading...
-          </>
-        ) : (
-          <> 🔒 Encrypt &amp; Upload to Pinata IPFS </>
-        )}
-      </button>
+      {!connection.isConnected ? (
+        <button
+          type="button"
+          onClick={handleConnect}
+          disabled={connecting}
+          className="btn btn-primary btn-lg btn-full"
+          style={{ gap: "0.625rem" }}
+        >
+          {connecting ? (
+            <>
+              <div className="spinner spinner-sm" style={{ borderColor: "rgba(255,255,255,0.2)", borderTopColor: "#fff" }} />
+              Connecting...
+            </>
+          ) : (
+            <>
+              <svg width="16" height="16" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+                <circle cx="16" cy="16" r="15" stroke="rgba(255,255,255,0.5)" strokeWidth="2" fill="none" />
+                <text x="16" y="21" textAnchor="middle" fill="white" fontSize="14" fontWeight="bold" fontFamily="sans-serif">S</text>
+              </svg>
+              Connect Slush Wallet
+            </>
+          )}
+        </button>
+      ) : (
+        <button type="submit" disabled={loading} className="btn btn-primary btn-lg btn-full">
+          {loading ? (
+            <>
+              <div className="spinner spinner-sm" style={{ borderColor: "rgba(255,255,255,0.2)", borderTopColor: "#fff" }} />
+              Creating Campaign...
+            </>
+          ) : (
+            <> 🔐 Create Campaign on Sui </>
+          )}
+        </button>
+      )}
     </form>
   );
 }

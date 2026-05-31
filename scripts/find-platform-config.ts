@@ -2,13 +2,13 @@
  * Quick script to find the PlatformConfig shared object from our published package
  */
 
-import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
+import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 
 const PACKAGE_ID = "0x2856399f6070131317b3cead66aa7be5c947e6335068d5ca62c7bec3f5c58e25";
 const SUI_NETWORK = "testnet";
 
 async function main() {
-  const client = new SuiClient({ url: getFullnodeUrl(SUI_NETWORK) });
+  const client = new SuiJsonRpcClient({ url: getJsonRpcFullnodeUrl(SUI_NETWORK), network: SUI_NETWORK });
 
   console.log("Looking for PlatformConfig objects owned by package:", PACKAGE_ID);
 

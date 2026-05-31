@@ -2,9 +2,11 @@ module private_tube::private_tube {
     use sui::coin::{Self, Coin};
     use sui::sui::SUI;
     use sui::transfer;
-    use sui::tx_context::{Self, TxContext};
+    use sui::tx_context::TxContext;
     use sui::event;
-    use sui::object::{Self, UID};
+    use sui::object::UID;
+    use sui::dynamic_object_field as dof;
+    use sui::vec_map::{Self, VecMap};
 
     const EInsufficientPayment: u64 = 1;
     const EInvalidFeePercentage: u64 = 2;
@@ -17,6 +19,9 @@ module private_tube::private_tube {
         creator: address,
         price_mist: u64,
         duration_hours: u64,
+        title: vector<u8>,
+        description: vector<u8>,
+        thumbnail_video_id: vector<u8>,
     }
 
     public struct AccessPurchased has copy, drop {
@@ -39,6 +44,23 @@ module private_tube::private_tube {
         creator: address,
         price_mist: u64,
         duration_hours: u64,
+        title: vector<u8>,
+        description: vector<u8>,
+        thumbnail_video_id: vector<u8>,
+        encrypted_url: vector<u8>,
+        iv: vector<u8>,
+        auth_tag: vector<u8>,
+        is_disabled: bool,
+        disabled_reason: vector<u8>,
+        total_purchases: u64,
+        total_gross_mist: u64,
+    }
+
+    public struct AccessRecord has key, store {
+        id: UID,
+        buyer: address,
+        campaign_id: address,
+        expiration_timestamp_ms: u64,
     }
 
     public struct PlatformConfig has key {
@@ -46,6 +68,11 @@ module private_tube::private_tube {
         treasury: address,
         fee_bps: u64,
         admin: address,
+    }
+
+    public struct Registry has key {
+        id: UID,
+        campaigns: VecMap<address, address>,
     }
 
     fun init(ctx: &mut TxContext) {
@@ -56,12 +83,25 @@ module private_tube::private_tube {
             admin: tx_context::sender(ctx),
         };
         transfer::share_object(config);
+
+        let registry = Registry {
+            id: object::new(ctx),
+            campaigns: vec_map::empty(),
+        };
+        transfer::share_object(registry);
     }
 
     public entry fun create_campaign(
+        registry: &mut Registry,
         video_id: vector<u8>,
         price_mist: u64,
         duration_hours: u64,
+        title: vector<u8>,
+        description: vector<u8>,
+        thumbnail_video_id: vector<u8>,
+        encrypted_url: vector<u8>,
+        iv: vector<u8>,
+        auth_tag: vector<u8>,
         ctx: &mut TxContext
     ) {
         assert!(price_mist > 0, EZeroAmount);
@@ -73,9 +113,21 @@ module private_tube::private_tube {
             creator: tx_context::sender(ctx),
             price_mist,
             duration_hours,
+            title,
+            description,
+            thumbnail_video_id,
+            encrypted_url,
+            iv,
+            auth_tag,
+            is_disabled: false,
+            disabled_reason: b"",
+            total_purchases: 0,
+            total_gross_mist: 0,
         };
 
         let campaign_id = object::uid_to_address(&campaign.id);
+
+        vec_map::insert(&mut registry.campaigns, campaign_id, campaign_id);
 
         event::emit(CampaignCreated {
             campaign_id,
@@ -83,6 +135,9 @@ module private_tube::private_tube {
             creator: tx_context::sender(ctx),
             price_mist,
             duration_hours,
+            title,
+            description,
+            thumbnail_video_id,
         });
 
         transfer::share_object(campaign);
@@ -90,7 +145,7 @@ module private_tube::private_tube {
 
     public entry fun purchase_access(
         config: &PlatformConfig,
-        campaign: &Campaign,
+        campaign: &mut Campaign,
         payment: Coin<SUI>,
         ctx: &mut TxContext
     ) {
@@ -115,8 +170,20 @@ module private_tube::private_tube {
 
         transfer::public_transfer(payment_mut, campaign.creator);
 
+        campaign.total_purchases = campaign.total_purchases + 1;
+        campaign.total_gross_mist = campaign.total_gross_mist + total_amount;
+
         let expiration_timestamp_ms = tx_context::epoch_timestamp_ms(ctx) + (campaign.duration_hours * 3600 * 1000);
         let campaign_id = object::uid_to_address(&campaign.id);
+
+        let access_record = AccessRecord {
+            id: object::new(ctx),
+            buyer: tx_context::sender(ctx),
+            campaign_id,
+            expiration_timestamp_ms,
+        };
+
+        dof::add(&mut campaign.id, tx_context::sender(ctx), access_record);
 
         event::emit(AccessPurchased {
             campaign_id,
@@ -174,5 +241,71 @@ module private_tube::private_tube {
 
     public fun get_campaign_duration_hours(campaign: &Campaign): u64 {
         campaign.duration_hours
+    }
+
+    public fun get_campaign_title(campaign: &Campaign): vector<u8> {
+        campaign.title
+    }
+
+    public fun get_campaign_description(campaign: &Campaign): vector<u8> {
+        campaign.description
+    }
+
+    public fun get_campaign_thumbnail_video_id(campaign: &Campaign): vector<u8> {
+        campaign.thumbnail_video_id
+    }
+
+    public fun get_campaign_encrypted_url(campaign: &Campaign): vector<u8> {
+        campaign.encrypted_url
+    }
+
+    public fun get_campaign_iv(campaign: &Campaign): vector<u8> {
+        campaign.iv
+    }
+
+    public fun get_campaign_auth_tag(campaign: &Campaign): vector<u8> {
+        campaign.auth_tag
+    }
+
+    public fun get_campaign_is_disabled(campaign: &Campaign): bool {
+        campaign.is_disabled
+    }
+
+    public fun get_campaign_disabled_reason(campaign: &Campaign): vector<u8> {
+        campaign.disabled_reason
+    }
+
+    public fun get_campaign_total_purchases(campaign: &Campaign): u64 {
+        campaign.total_purchases
+    }
+
+    public fun get_campaign_total_gross_mist(campaign: &Campaign): u64 {
+        campaign.total_gross_mist
+    }
+
+    public fun get_registry_campaigns(registry: &Registry): &VecMap<address, address> {
+        &registry.campaigns
+    }
+
+    public fun get_access_record_expiration(
+        campaign: &Campaign,
+        buyer: address,
+        _ctx: &TxContext
+    ): u64 {
+        if (dof::exists(&campaign.id, buyer)) {
+            let record: &AccessRecord = dof::borrow(&campaign.id, buyer);
+            record.expiration_timestamp_ms
+        } else {
+            0
+        }
+    }
+
+    public fun has_valid_access(
+        campaign: &Campaign,
+        buyer: address,
+        ctx: &TxContext
+    ): bool {
+        let expiration = get_access_record_expiration(campaign, buyer, ctx);
+        expiration > tx_context::epoch_timestamp_ms(ctx)
     }
 }

@@ -6,7 +6,7 @@
  * Flow:
  * 1. If wallet not connected → show "Connect Slush Wallet" button
  * 2. Once connected → show price confirmation
- * 3. On confirm → build & send SUI transfer txn
+ * 3. On confirm → call contract's purchase_access function
  * 4. On success → call onSuccess(txDigest)
  */
 
@@ -18,8 +18,12 @@ import { dAppKit } from "@/components/SuiProviders";
 import { Transaction } from "@mysten/sui/transactions";
 import { SLUSH_WALLET_NAME } from "@mysten/slush-wallet";
 
+const PACKAGE_ID = process.env.NEXT_PUBLIC_PACKAGE_ID || "";
+const PLATFORM_CONFIG_ID = process.env.NEXT_PUBLIC_PLATFORM_CONFIG_ID || "";
+
 interface PayButtonProps {
   videoId: string;
+  campaignId: string;
   priceMist: string;
   creatorAddress: string;
   onSuccess: (txDigest: string) => void;
@@ -29,6 +33,7 @@ interface PayButtonProps {
 
 export function PayButton({
   videoId,
+  campaignId,
   priceMist,
   creatorAddress,
   onSuccess,
@@ -48,7 +53,7 @@ export function PayButton({
   const priceSui = (Number(BigInt(priceMist)) / 1_000_000_000).toFixed(4);
   const btnLabel = label ?? `Pay ${formatSui(priceMist)} SUI`;
 
-  // ── Step 1: Connect wallet ────────────────────────────────────────────────
+  // ── Step 1: Connect wallet ──────────────────────────────────────────────
   const handleConnect = async () => {
     setConnecting(true);
     try {
@@ -92,10 +97,19 @@ export function PayButton({
     setPaying(true);
     try {
       const tx = new Transaction();
+      
       // Split coin for exact payment
-      const [paymentCoin] = tx.splitCoins(tx.gas, [BigInt(priceMist)]);
-      // Transfer to creator
-      tx.transferObjects([paymentCoin], creatorAddress);
+      const [coin] = tx.splitCoins(tx.gas, [tx.pure.u64(BigInt(priceMist))]);
+      
+      // Call contract's purchase_access function
+      tx.moveCall({
+        target: `${PACKAGE_ID}::private_tube::purchase_access`,
+        arguments: [
+          tx.object(PLATFORM_CONFIG_ID),
+          tx.object(campaignId),
+          coin,
+        ],
+      });
 
       const result = await kit.signAndExecuteTransaction({ transaction: tx });
       const digest =

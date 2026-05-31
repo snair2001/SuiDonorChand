@@ -1,19 +1,14 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useRouter, useParams } from "next/navigation";
+import { useRouter, useParams, useSearchParams } from "next/navigation";
 import { SecureVideoPlayer } from "@/components/SecureVideoPlayer";
 import { PayButton } from "@/components/PayButton";
 import { LoadingPage } from "@/components/LoadingSpinner";
 import { toast } from "sonner";
 import Link from "next/link";
 import { formatSui } from "@/lib/pricing";
-
-interface VideoInfo {
-  videoId: string; title: string; description: string;
-  creatorAddress: string; priceMist: string; durationMs: number;
-  isSoldOut: boolean; isDisabled: boolean; status: string; createdAt: string;
-}
+import { getCampaign, SafeVideoMetadata } from "@/lib/sui";
 
 interface AccessInfo {
   hasAccess: boolean;
@@ -24,11 +19,13 @@ interface AccessInfo {
 export default function WatchPage() {
   const router = useRouter();
   const params = useParams();
+  const searchParams = useSearchParams();
   const videoId = params.videoId as string;
+  const campaignId = searchParams.get("campaignId") as string;
 
   const [loading, setLoading] = useState(true);
   const [authed, setAuthed] = useState(false);
-  const [video, setVideo] = useState<VideoInfo | null>(null);
+  const [campaign, setCampaign] = useState<SafeVideoMetadata | null>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
   const [access, setAccess] = useState<AccessInfo | null>(null);
   const [accessLoading, setAccessLoading] = useState(false);
@@ -52,7 +49,7 @@ export default function WatchPage() {
     }
   }, [videoId]);
 
-  // ── Init: verify session + load video + check access ─────────────────────
+  // ── Init: verify session + load campaign + check access ─────────────────────
   useEffect(() => {
     const init = async () => {
       // 1. Verify session
@@ -61,7 +58,7 @@ export default function WatchPage() {
         const sessionData = await sessionRes.json();
         if (!sessionData.user) {
           setLoading(false);
-          router.replace(`/login?redirect=/watch/${videoId}`);
+          router.replace(`/login?redirect=/watch/${videoId}${campaignId ? `?campaignId=${campaignId}` : ""}`);
           return;
         }
       } catch {
@@ -72,16 +69,20 @@ export default function WatchPage() {
 
       setAuthed(true);
 
-      // 2. Load video metadata + access in parallel
+      // 2. Load campaign metadata + access in parallel
       await Promise.all([
         (async () => {
           try {
-            const res = await fetch(`/api/videos/${videoId}`);
-            const data = await res.json();
-            if (!res.ok || !data.video) setVideoError("Video not found");
-            else setVideo(data.video);
+            if (campaignId) {
+              const data = await getCampaign(campaignId);
+              if (data) {
+                setCampaign(data);
+              } else {
+                setVideoError("Campaign not found");
+              }
+            }
           } catch {
-            setVideoError("Failed to load video information");
+            setVideoError("Failed to load campaign information");
           }
         })(),
         checkAccess(),
@@ -90,11 +91,11 @@ export default function WatchPage() {
       setLoading(false);
     };
     init();
-  }, [videoId, router, checkAccess]);
+  }, [videoId, campaignId, router, checkAccess]);
 
   // ── Handle payment success ────────────────────────────────────────────────
   const handlePaymentSuccess = async (txDigest: string) => {
-    if (!video) return;
+    if (!campaign) return;
     console.log("[WatchPage] Payment success! txDigest:", txDigest.slice(0, 20) + "...");
     setPurchasing(true);
     try {
@@ -165,7 +166,7 @@ export default function WatchPage() {
   };
 
   // ── Loading states ────────────────────────────────────────────────────────
-  if (loading) return <LoadingPage message="Loading video..." />;
+  if (loading) return <LoadingPage message="Loading campaign..." />;
   if (!authed) return null;
 
   if (videoError) return (
@@ -194,8 +195,8 @@ export default function WatchPage() {
   };
 
   const hasAccess = access?.hasAccess ?? false;
-  const isDisabled = video?.isDisabled ?? false;
-  const isSoldOut = video?.isSoldOut ?? false;
+  const isDisabled = campaign?.isDisabled ?? false;
+  const isSoldOut = false;
 
   return (
     <div className="page">
@@ -205,20 +206,20 @@ export default function WatchPage() {
           <Link href="/marketplace" className="breadcrumb">Marketplace</Link>
           <span className="breadcrumb-sep">/</span>
           <span className="breadcrumb-current truncate" style={{ maxWidth: "280px" }}>
-            {video?.title || videoId}
+            {campaign?.title || videoId}
           </span>
         </div>
 
         {/* Title */}
-        {video && (
+        {campaign && (
           <div style={{ marginBottom: "1.5rem" }} className="stack-xs">
             <h1 style={{ fontSize: "clamp(1.375rem, 3vw, 1.875rem)", fontWeight: 800, color: "#f8fafc" }}>
-              {video.title}
+              {campaign.title}
             </h1>
             <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
-              <span style={{ fontSize: "0.875rem", color: "#64748b" }}>by {fmtAddr(video.creatorAddress)}</span>
+              <span style={{ fontSize: "0.875rem", color: "#64748b" }}>by {fmtAddr(campaign.creatorAddress)}</span>
               <span style={{ color: "#334155" }}>·</span>
-              <span style={{ fontSize: "0.875rem", color: "#64748b" }}>{fmtDuration(video.durationMs)} access</span>
+              <span style={{ fontSize: "0.875rem", color: "#64748b" }}>{fmtDuration(campaign.durationHours * 60 * 60 * 1000)} access</span>
               {access?.hasAccess && access.expiresAt && (
                 <>
                   <span style={{ color: "#334155" }}>·</span>
@@ -250,22 +251,22 @@ export default function WatchPage() {
                 <p style={{ color: "#64748b", fontSize: "0.9375rem" }}>
                   {access?.isExpired
                     ? "Your access has expired. Renew to keep watching."
-                    : `Pay to unlock ${fmtDuration(video?.durationMs ?? 0)} of access.`}
+                    : `Pay to unlock ${fmtDuration((campaign?.durationHours ?? 0) * 60 * 60 * 1000)} of access.`}
                 </p>
               </div>
 
-              {video && !isDisabled && !isSoldOut && (
+              {campaign && !isDisabled && !isSoldOut && (
                 <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
                   {/* Price info */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.75rem 1rem", background: "rgba(168,85,247,0.08)", border: "1px solid rgba(168,85,247,0.15)", borderRadius: "0.75rem" }}>
                     <span style={{ fontSize: "0.875rem", color: "#94a3b8" }}>Price</span>
                     <span style={{ fontSize: "1.125rem", fontWeight: 700, color: "#a855f7" }}>
-                      {formatSui(video.priceMist)} SUI
+                      {formatSui(campaign.priceMist)} SUI
                     </span>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.5rem 1rem", background: "rgba(0,0,0,0.2)", borderRadius: "0.5rem" }}>
                     <span style={{ fontSize: "0.8125rem", color: "#475569" }}>Access duration</span>
-                    <span style={{ fontSize: "0.8125rem", color: "#94a3b8" }}>{fmtDuration(video.durationMs)}</span>
+                    <span style={{ fontSize: "0.8125rem", color: "#94a3b8" }}>{fmtDuration(campaign.durationHours * 60 * 60 * 1000)}</span>
                   </div>
 
                   {purchasing ? (
@@ -275,9 +276,10 @@ export default function WatchPage() {
                     </div>
                   ) : (
                     <PayButton
-                      videoId={video.videoId}
-                      priceMist={video.priceMist}
-                      creatorAddress={video.creatorAddress}
+                      videoId={videoId}
+                      campaignId={campaign.campaignId}
+                      priceMist={campaign.priceMist}
+                      creatorAddress={campaign.creatorAddress}
                       onSuccess={handlePaymentSuccess}
                     />
                   )}
@@ -286,12 +288,7 @@ export default function WatchPage() {
 
               {isDisabled && (
                 <div className="badge badge-gray" style={{ padding: "0.625rem 1rem" }}>
-                  🚫 This video has been disabled by the admin
-                </div>
-              )}
-              {isSoldOut && !isDisabled && (
-                <div className="badge badge-red" style={{ padding: "0.625rem 1rem" }}>
-                  🔒 Sold Out — Revenue cap reached
+                  🚫 This campaign has been disabled
                 </div>
               )}
 
@@ -312,12 +309,12 @@ export default function WatchPage() {
         )}
 
         {/* Description */}
-        {video?.description && (
+        {campaign?.description && (
           <div className="card" style={{ padding: "1.5rem", marginTop: "1.5rem" }}>
             <h3 style={{ fontSize: "0.875rem", fontWeight: 600, color: "#94a3b8", marginBottom: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
               Description
             </h3>
-            <p style={{ fontSize: "0.9375rem", color: "#64748b", lineHeight: 1.7 }}>{video.description}</p>
+            <p style={{ fontSize: "0.9375rem", color: "#64748b", lineHeight: 1.7 }}>{campaign.description}</p>
           </div>
         )}
 
@@ -328,10 +325,10 @@ export default function WatchPage() {
           </h3>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "0.75rem" }}>
             {[
-              "Video URL encrypted with AES-256-GCM, stored on Pinata IPFS",
-              "Decryption happens server-side only — raw URL never reaches your browser",
-              "Access verified on every request via Pinata IPFS records",
+              "All data stored on-chain on Sui testnet",
               "Payment recorded on Sui testnet blockchain",
+              "Video URL encrypted with AES-256-GCM",
+              "Decryption happens server-side only",
             ].map((item, i) => (
               <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: "0.625rem" }}>
                 <span style={{ color: "#7c3aed", flexShrink: 0, marginTop: "2px" }}>•</span>

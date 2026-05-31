@@ -6,10 +6,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
-import { getVideoMetadata } from "@/lib/pinata";
+import { getCampaignByVideoId, getCampaignEncryptedData, checkAccess } from "@/lib/sui-server";
 import { decryptText } from "@/lib/encryption";
 import { toEmbedUrl, extractYouTubeId } from "@/lib/youtube";
-import { checkAccess } from "@/lib/accessStore";
 
 export async function GET(
   req: NextRequest,
@@ -21,8 +20,17 @@ export async function GET(
       console.log("[play] Starting play request for:", { videoId, userEmail: user.email, userAddress: user.suiAddress });
       if (!videoId) return NextResponse.json({ error: "Video ID required" }, { status: 400 });
 
-      // Check access by email AND address (handles wallet mismatches)
-      const access = await checkAccess(user.suiAddress, videoId, user.email);
+      // Get campaign by video ID
+      const campaign = await getCampaignByVideoId(videoId);
+      if (!campaign) return NextResponse.json({ error: "Video not found" }, { status: 404 });
+
+      // Check if campaign is disabled
+      if (campaign.isDisabled) {
+        return NextResponse.json({ error: "This video has been disabled" }, { status: 403 });
+      }
+
+      // Check access
+      const access = await checkAccess(campaign.campaignId, user.suiAddress);
 
       if (!access.hasAccess) {
         return NextResponse.json(
@@ -34,15 +42,13 @@ export async function GET(
         );
       }
 
-      console.log("[play] Access confirmed! Fetching video metadata...");
-      const result = await getVideoMetadata(videoId);
-      if (!result) return NextResponse.json({ error: "Video not found" }, { status: 404 });
-
-      const { metadata } = result;
+      console.log("[play] Access confirmed! Fetching encrypted data...");
+      const encryptedData = await getCampaignEncryptedData(campaign.campaignId);
+      if (!encryptedData) return NextResponse.json({ error: "Video not found" }, { status: 404 });
 
       let rawUrl: string;
       try {
-        rawUrl = decryptText(metadata.encryptedUrl, metadata.iv, metadata.authTag);
+        rawUrl = decryptText(encryptedData.encryptedUrl, encryptedData.iv, encryptedData.authTag);
       } catch (decryptErr) {
         console.error("[play] Decryption failed:", decryptErr);
         return NextResponse.json({ error: "Failed to decrypt video data" }, { status: 500 });
@@ -58,7 +64,7 @@ export async function GET(
       return NextResponse.json({
         embedUrl: toEmbedUrl(ytVideoId),
         expiresAt: access.expiresAt,
-        title: metadata.title,
+        title: campaign.title,
       });
     } catch (err) {
       console.error("[play] FATAL Error:", err);

@@ -5,36 +5,27 @@ import { toast } from "sonner";
 import { VideoCard } from "@/components/VideoCard";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import Link from "next/link";
+import { getCampaigns, SafeVideoMetadata } from "@/lib/sui";
+import { getThumbnailUrl } from "@/lib/youtube";
 
-interface Video {
-  videoId: string; cid: string; title: string; description: string;
-  creatorAddress: string; priceMist: string; priceSui: string;
-  durationMs: number; isSoldOut: boolean; isDisabled: boolean;
-  status: string; createdAt: string; thumbnailUrl?: string;
-}
 interface AccessMap {
   [id: string]: { hasAccess: boolean; expiresAt: string | null; isExpired: boolean; };
 }
-interface User { email: string; suiAddress: string; isAdmin: boolean; }
 
 export default function MarketplacePage() {
-  const [videos, setVideos] = useState<Video[]>([]);
+  const [campaigns, setCampaigns] = useState<SafeVideoMetadata[]>([]);
   const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState<User | null>(null);
   const [accessMap, setAccessMap] = useState<AccessMap>({});
-  const [showDisabled, setShowDisabled] = useState(false);
 
-  const fetchVideos = useCallback(async (includeDisabled = false) => {
+  const fetchCampaigns = useCallback(async () => {
     try {
-      const res = await fetch(includeDisabled ? "/api/videos/list?includeDisabled=true" : "/api/videos/list");
-      const data = await res.json();
-      if (data.videos) setVideos(data.videos);
-    } catch { toast.error("Failed to load videos"); }
+      const data = await getCampaigns();
+      setCampaigns(data);
+    } catch { toast.error("Failed to load campaigns"); }
     finally { setLoading(false); }
   }, []);
 
   const fetchAccess = useCallback(async (ids: string[]) => {
-    if (!user) return;
     const results: AccessMap = {};
     await Promise.all(ids.map(async id => {
       try {
@@ -44,22 +35,15 @@ export default function MarketplacePage() {
       } catch { results[id] = { hasAccess: false, expiresAt: null, isExpired: false }; }
     }));
     setAccessMap(results);
-  }, [user]);
+  }, []);
 
   useEffect(() => {
-    fetch("/api/auth/session").then(r => r.json()).then(d => setUser(d.user || null)).catch(() => {});
-    fetchVideos();
-  }, [fetchVideos]);
+    fetchCampaigns();
+  }, [fetchCampaigns]);
 
   useEffect(() => {
-    if (user && videos.length > 0) fetchAccess(videos.map(v => v.videoId));
-  }, [user, videos, fetchAccess]);
-
-  useEffect(() => { if (user?.isAdmin) fetchVideos(showDisabled); }, [showDisabled, user, fetchVideos]);
-
-  const handleDisableToggle = (videoId: string, disabled: boolean) => {
-    setVideos(p => p.map(v => v.videoId === videoId ? { ...v, isDisabled: disabled } : v));
-  };
+    if (campaigns.length > 0) fetchAccess(campaigns.map(v => v.videoId));
+  }, [campaigns, fetchAccess]);
 
   const getAccessStatus = (id: string): "none" | "active" | "expired" => {
     const a = accessMap[id];
@@ -69,9 +53,7 @@ export default function MarketplacePage() {
     return "none";
   };
 
-  const visible = user?.isAdmin
-    ? (showDisabled ? videos : videos.filter(v => !v.isDisabled))
-    : videos.filter(v => !v.isDisabled);
+  const visible = campaigns.filter(v => !v.isDisabled);
 
   return (
     <div className="page">
@@ -80,85 +62,59 @@ export default function MarketplacePage() {
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", justifyContent: "space-between", gap: "1rem", marginBottom: "2.5rem" }}>
           <div>
             <h1 style={{ fontSize: "clamp(1.75rem, 4vw, 2.25rem)", fontWeight: 800, color: "#f8fafc" }}>Marketplace</h1>
-            <p style={{ color: "#64748b", marginTop: "0.375rem" }}>Pay with Slush wallet — get time-limited access instantly</p>
+            <p style={{ color: "#64748b", marginTop: "0.375rem" }}>Pay with Slush wallet — get time-limited access instantly via Sui Testnet</p>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-            {user?.isAdmin && (
-              <button
-                onClick={() => setShowDisabled(v => !v)}
-                className={`btn btn-sm ${showDisabled ? "btn-danger" : "btn-outline"}`}
-              >
-                {showDisabled ? "Hide Disabled" : "Show Disabled"}
-              </button>
-            )}
-            {!user && <Link href="/login" className="btn btn-primary">Login to Purchase</Link>}
-          </div>
+          <Link href="/login" className="btn btn-primary">Login to Purchase</Link>
         </div>
-
-        {/* Admin notice */}
-        {user?.isAdmin && (
-          <div className="alert alert-warning" style={{ marginBottom: "1.5rem" }}>
-            <span>🛡️</span>
-            Admin view — Disable/Enable buttons are visible only to you
-          </div>
-        )}
 
         {/* Loading */}
         {loading ? (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "6rem 0", gap: "1rem" }}>
             <LoadingSpinner size="lg" />
-            <p style={{ color: "#475569" }}>Loading from Pinata IPFS...</p>
+            <p style={{ color: "#475569" }}>Loading from Sui Testnet...</p>
           </div>
         ) : visible.length === 0 ? (
           <div className="empty-state">
             <div className="empty-icon">🎬</div>
-            <h2 className="empty-title">No videos yet</h2>
-            <p className="empty-desc">Be the first to create an encrypted video listing</p>
-            <Link href="/create" className="btn btn-primary" style={{ marginTop: "0.5rem" }}>Create Video</Link>
+            <h2 className="empty-title">No campaigns yet</h2>
+            <p className="empty-desc">Be the first to create an encrypted video listing on Sui Testnet</p>
+            <Link href="/create" className="btn btn-primary" style={{ marginTop: "0.5rem" }}>Create Campaign</Link>
           </div>
         ) : (
           <>
             {/* Stats bar */}
             <div style={{ display: "flex", alignItems: "center", gap: "1.5rem", marginBottom: "1.5rem", flexWrap: "wrap" }}>
               <span style={{ fontSize: "0.875rem", color: "#64748b" }}>
-                <strong style={{ color: "#f8fafc" }}>{visible.length}</strong> video{visible.length !== 1 ? "s" : ""} available
+                <strong style={{ color: "#f8fafc" }}>{visible.length}</strong> campaign{visible.length !== 1 ? "s" : ""} available
               </span>
-              {user && (
-                <span style={{ fontSize: "0.875rem", color: "#a855f7" }}>
-                  <strong>{Object.values(accessMap).filter(a => a.hasAccess).length}</strong> active access
-                </span>
-              )}
-              {user?.isAdmin && showDisabled && (
-                <span style={{ fontSize: "0.875rem", color: "#f87171" }}>
-                  <strong>{videos.filter(v => v.isDisabled).length}</strong> disabled
-                </span>
-              )}
+              <span style={{ fontSize: "0.875rem", color: "#a855f7" }}>
+                <strong>{Object.values(accessMap).filter(a => a.hasAccess).length}</strong> active access
+              </span>
             </div>
 
             <div className="video-grid">
-              {visible.map(video => (
+              {visible.map(campaign => (
                 <VideoCard
-                  key={video.videoId}
-                  videoId={video.videoId}
-                  title={video.title}
-                  creatorAddress={video.creatorAddress}
-                  priceMist={video.priceMist}
-                  durationMs={video.durationMs}
-                  isSoldOut={video.isSoldOut}
-                  isDisabled={video.isDisabled}
-                  status={video.status}
-                  createdAt={video.createdAt}
-                  thumbnailUrl={video.thumbnailUrl}
-                  accessStatus={getAccessStatus(video.videoId)}
-                  expiresAt={accessMap[video.videoId]?.expiresAt}
-                  isAdmin={user?.isAdmin}
-                  onDisableToggle={handleDisableToggle}
+                  key={campaign.videoId}
+                  videoId={campaign.videoId}
+                  campaignId={campaign.campaignId}
+                  title={campaign.title}
+                  creatorAddress={campaign.creatorAddress}
+                  priceMist={campaign.priceMist}
+                  durationMs={campaign.durationHours * 60 * 60 * 1000}
+                  isSoldOut={false}
+                  isDisabled={campaign.isDisabled}
+                  status={campaign.isDisabled ? "disabled" : "active"}
+                  createdAt={new Date().toISOString()}
+                  thumbnailUrl={getThumbnailUrl(campaign.thumbnailVideoId)}
+                  accessStatus={getAccessStatus(campaign.videoId)}
+                  expiresAt={accessMap[campaign.videoId]?.expiresAt}
                 />
               ))}
             </div>
 
             <p style={{ textAlign: "center", fontSize: "0.8125rem", color: "#334155", marginTop: "3rem", paddingTop: "1.5rem", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-              Payments via Slush wallet on Sui Testnet · Metadata on Pinata IPFS · Revenue cap $20 USD per video
+              Payments via Slush wallet on Sui Testnet · All data stored on-chain on Sui
             </p>
           </>
         )}

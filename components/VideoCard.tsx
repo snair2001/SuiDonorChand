@@ -3,10 +3,10 @@
 import { useState } from "react";
 import Link from "next/link";
 import { formatSui } from "@/lib/pricing";
-import { toast } from "sonner";
 
 interface VideoCardProps {
   videoId: string;
+  campaignId: string;
   title: string;
   creatorAddress: string;
   priceMist: string;
@@ -18,20 +18,14 @@ interface VideoCardProps {
   thumbnailUrl?: string;
   accessStatus?: "none" | "active" | "expired";
   expiresAt?: string | null;
-  isAdmin?: boolean;
-  onDisableToggle?: (videoId: string, disable: boolean) => void;
 }
 
 export function VideoCard({
-  videoId, title, creatorAddress, priceMist, durationMs,
+  videoId, campaignId, title, creatorAddress, priceMist, durationMs,
   isSoldOut, isDisabled, status, createdAt, thumbnailUrl,
   accessStatus = "none", expiresAt,
-  isAdmin = false, onDisableToggle,
 }: VideoCardProps) {
   const [imgError, setImgError] = useState(false);
-  const [disabling, setDisabling] = useState(false);
-  const [showReason, setShowReason] = useState(false);
-  const [reason, setReason] = useState("");
 
   const fmtAddr = (a: string) => `${a.slice(0, 6)}...${a.slice(-4)}`;
   const fmtDuration = (ms: number) => {
@@ -49,33 +43,14 @@ export function VideoCard({
     return `${m}m left`;
   };
 
-  const handleDisable = async (disable: boolean) => {
-    if (disable && !reason.trim()) { setShowReason(true); return; }
-    setDisabling(true);
-    try {
-      const res = await fetch(`/api/admin/videos/${videoId}/disable`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ disable, reason: reason.trim() || undefined }),
-      });
-      const data = await res.json();
-      if (!res.ok) { toast.error(data.error || "Failed"); return; }
-      toast.success(data.message);
-      setShowReason(false);
-      setReason("");
-      onDisableToggle?.(videoId, disable);
-    } catch { toast.error("Network error"); }
-    finally { setDisabling(false); }
-  };
-
   const renderAction = () => {
     if (isDisabled) return (
       <div className="badge badge-gray" style={{ width: "100%", justifyContent: "center", padding: "0.625rem" }}>
-        🚫 Disabled by Admin
+        🚫 Disabled
       </div>
     );
     if (accessStatus === "active") return (
-      <Link href={`/watch/${videoId}`} className="btn btn-success btn-full">
+      <Link href={`/watch/${videoId}?campaignId=${campaignId}`} className="btn btn-success btn-full">
         ▶ Watch Now
       </Link>
     );
@@ -85,7 +60,7 @@ export function VideoCard({
           Access Expired
         </div>
         {!isSoldOut && (
-          <Link href={`/watch/${videoId}`} className="btn btn-primary btn-full">
+          <Link href={`/watch/${videoId}?campaignId=${campaignId}`} className="btn btn-primary btn-full">
             🔄 Renew Access
           </Link>
         )}
@@ -96,9 +71,9 @@ export function VideoCard({
         🔒 Sold Out
       </div>
     );
-    // Not purchased yet — link to watch page where payment happens
+    // Not purchased yet - link to watch page where payment happens
     return (
-      <Link href={`/watch/${videoId}`} className="btn btn-primary btn-full">
+      <Link href={`/watch/${videoId}?campaignId=${campaignId}`} className="btn btn-primary btn-full">
         🔒 Buy &amp; Watch
       </Link>
     );
@@ -155,42 +130,6 @@ export function VideoCard({
         )}
 
         {renderAction()}
-
-        {/* Admin controls */}
-        {isAdmin && (
-          <div style={{ paddingTop: "0.75rem", borderTop: "1px solid rgba(255,255,255,0.07)" }} className="stack-xs">
-            {showReason && !isDisabled ? (
-              <>
-                <input
-                  type="text"
-                  value={reason}
-                  onChange={e => setReason(e.target.value)}
-                  placeholder="Reason (optional)"
-                  className="input"
-                  style={{ fontSize: "0.8125rem", padding: "0.5rem 0.75rem" }}
-                  maxLength={200}
-                />
-                <div style={{ display: "flex", gap: "0.5rem" }}>
-                  <button onClick={() => handleDisable(true)} disabled={disabling} className="btn btn-danger btn-sm" style={{ flex: 1 }}>
-                    {disabling ? "..." : "Confirm Disable"}
-                  </button>
-                  <button onClick={() => { setShowReason(false); setReason(""); }} className="btn btn-outline btn-sm">
-                    Cancel
-                  </button>
-                </div>
-              </>
-            ) : (
-              <button
-                onClick={() => isDisabled ? handleDisable(false) : handleDisable(true)}
-                disabled={disabling}
-                className={`btn btn-sm btn-full ${isDisabled ? "btn-success" : "btn-danger"}`}
-              >
-                {disabling ? "Updating..." : isDisabled ? "🟢 Re-enable Campaign" : "🔴 Disable Campaign"}
-              </button>
-            )}
-            <p style={{ fontSize: "0.6875rem", color: "#334155", textAlign: "center" }}>Admin only</p>
-          </div>
-        )}
       </div>
     </div>
   );
