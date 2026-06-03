@@ -56,6 +56,8 @@ export default function MarketplacePage() {
   const visible = campaigns.filter(v => {
     if (v.isDisabled) return false;
     const allowedIds = process.env.NEXT_PUBLIC_ALLOWED_VIDEO_IDS;
+    // "none" or empty string = hide everything (fresh start mode)
+    if (allowedIds === "none" || allowedIds === "") return false;
     if (allowedIds) {
       const ids = allowedIds.split(",").map(id => id.trim()).filter(Boolean);
       if (ids.length > 0) return ids.includes(v.videoId);
