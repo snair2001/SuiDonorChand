@@ -238,7 +238,13 @@ export default function WatchPage() {
             <p style={{ color: "#64748b" }}>Checking access...</p>
           </div>
         ) : hasAccess ? (
-          <SecureVideoPlayer videoId={videoId} />
+          <SecureVideoPlayer
+            videoId={videoId}
+            onExpired={() => {
+              setAccess({ hasAccess: false, expiresAt: null, isExpired: true });
+              toast.info("Your access has expired. Purchase again to continue watching.");
+            }}
+          />
         ) : (
           /* ── Pay Gate ── */
           <div style={{ aspectRatio: "16/9", background: "rgba(0,0,0,0.5)", borderRadius: "1rem", border: "1px solid rgba(168,85,247,0.2)", display: "flex", alignItems: "center", justifyContent: "center" }}>

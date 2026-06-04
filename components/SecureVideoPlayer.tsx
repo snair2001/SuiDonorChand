@@ -6,6 +6,7 @@ import Link from "next/link";
 
 interface SecureVideoPlayerProps {
   videoId: string;
+  onExpired?: () => void;
 }
 
 interface PlayData {
@@ -14,7 +15,7 @@ interface PlayData {
   title: string;
 }
 
-export function SecureVideoPlayer({ videoId }: SecureVideoPlayerProps) {
+export function SecureVideoPlayer({ videoId, onExpired }: SecureVideoPlayerProps) {
   const [playData, setPlayData] = useState<PlayData | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMsg, setLoadingMsg] = useState("Verifying access...");
@@ -56,7 +57,13 @@ export function SecureVideoPlayer({ videoId }: SecureVideoPlayerProps) {
     if (!playData?.expiresAt) return;
     const update = () => {
       const diff = new Date(playData.expiresAt).getTime() - Date.now();
-      if (diff <= 0) { setTimeLeft("Expired"); setPlayData(null); setError("Your access has expired"); return; }
+      if (diff <= 0) {
+        setTimeLeft("Expired");
+        setPlayData(null);
+        setError("Your access has expired. Purchase again to continue watching.");
+        onExpired?.();
+        return;
+      }
       const h = Math.floor(diff / 3600000);
       const m = Math.floor((diff % 3600000) / 60000);
       const s = Math.floor((diff % 60000) / 1000);
