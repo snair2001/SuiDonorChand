@@ -30,12 +30,18 @@ export default function WatchPage() {
   const [access, setAccess] = useState<AccessInfo | null>(null);
   const [accessLoading, setAccessLoading] = useState(false);
   const [purchasing, setPurchasing] = useState(false);
+  // The actual Slush wallet address that signs on-chain transactions
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
 
   // ── Check access from the API ─────────────────────────────────────────────
-  const checkAccess = useCallback(async () => {
+  const checkAccess = useCallback(async (buyerAddr?: string) => {
     setAccessLoading(true);
+    const addr = buyerAddr ?? walletAddress;
     try {
-      const res = await fetch(`/api/videos/${videoId}/access`);
+      const url = addr
+        ? `/api/videos/${videoId}/access?wallet=${encodeURIComponent(addr)}`
+        : `/api/videos/${videoId}/access`;
+      const res = await fetch(url);
       const data = await res.json();
       setAccess({
         hasAccess: data.hasAccess || false,
@@ -94,9 +100,11 @@ export default function WatchPage() {
   }, [videoId, campaignId, router, checkAccess]);
 
   // ── Handle payment success ────────────────────────────────────────────────
-  const handlePaymentSuccess = async (txDigest: string) => {
+  const handlePaymentSuccess = async (txDigest: string, buyerWalletAddress: string) => {
     console.log("[WatchPage] Payment success! txDigest:", txDigest.slice(0, 20) + "...");
+    console.log("[WatchPage] Buyer wallet address:", buyerWalletAddress);
     setPurchasing(true);
+    setWalletAddress(buyerWalletAddress);
     toast.success("Payment confirmed on Sui! Verifying access...");
 
     // Poll on-chain access — the Move contract writes the AccessRecord in the
@@ -107,7 +115,7 @@ export default function WatchPage() {
     for (let i = 0; i < MAX_ATTEMPTS; i++) {
       await new Promise((r) => setTimeout(r, DELAY_MS));
       try {
-        const res = await fetch(`/api/videos/${videoId}/access`);
+        const res = await fetch(`/api/videos/${videoId}/access?wallet=${encodeURIComponent(buyerWalletAddress)}`);
         const data = await res.json();
         if (data.hasAccess) {
           setAccess({
@@ -206,6 +214,7 @@ export default function WatchPage() {
         ) : hasAccess ? (
           <SecureVideoPlayer
             videoId={videoId}
+            walletAddress={walletAddress ?? undefined}
             onExpired={() => {
               setAccess({ hasAccess: false, expiresAt: null, isExpired: true });
               toast.info("Your access has expired. Purchase again to continue watching.");

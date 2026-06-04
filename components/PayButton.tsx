@@ -26,7 +26,7 @@ interface PayButtonProps {
   campaignId: string;
   priceMist: string;
   creatorAddress: string;
-  onSuccess: (txDigest: string) => void;
+  onSuccess: (txDigest: string, walletAddress: string) => void;
   disabled?: boolean;
   label?: string;
 }
@@ -117,8 +117,12 @@ export function PayButton({
           ? result.Transaction.digest
           : (result as unknown as { digest: string }).digest;
 
+      // Get the actual wallet address that signed — this is the on-chain buyer key
+      const accounts = kit.stores.$accounts.get();
+      const signerAddress = accounts[0]?.address ?? "";
+
       toast.success("Payment confirmed on Sui!");
-      onSuccess(digest);
+      onSuccess(digest, signerAddress);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.toLowerCase().includes("cancel") || msg.toLowerCase().includes("reject")) {

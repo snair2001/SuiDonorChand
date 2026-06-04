@@ -20,6 +20,12 @@ export async function GET(
       console.log("[play] Starting play request for:", { videoId, userEmail: user.email, userAddress: user.suiAddress });
       if (!videoId) return NextResponse.json({ error: "Video ID required" }, { status: 400 });
 
+      // Use actual Slush wallet address if provided — it's the on-chain buyer key.
+      // Fall back to session suiAddress.
+      const walletParam = req.nextUrl.searchParams.get("wallet");
+      const buyerAddress = walletParam || user.suiAddress;
+      console.log("[play] Using buyer address:", buyerAddress);
+
       // Get campaign by video ID
       const campaign = await getCampaignByVideoId(videoId);
       if (!campaign) return NextResponse.json({ error: "Video not found" }, { status: 404 });
@@ -30,7 +36,7 @@ export async function GET(
       }
 
       // Check on-chain access — single source of truth
-      const access = await checkAccess(campaign.campaignId, user.suiAddress);
+      const access = await checkAccess(campaign.campaignId, buyerAddress);
 
       if (!access.hasAccess) {
         return NextResponse.json(

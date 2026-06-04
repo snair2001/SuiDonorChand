@@ -6,6 +6,7 @@ import Link from "next/link";
 
 interface SecureVideoPlayerProps {
   videoId: string;
+  walletAddress?: string;
   onExpired?: () => void;
 }
 
@@ -15,7 +16,7 @@ interface PlayData {
   title: string;
 }
 
-export function SecureVideoPlayer({ videoId, onExpired }: SecureVideoPlayerProps) {
+export function SecureVideoPlayer({ videoId, walletAddress, onExpired }: SecureVideoPlayerProps) {
   const [playData, setPlayData] = useState<PlayData | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMsg, setLoadingMsg] = useState("Verifying access...");
@@ -33,7 +34,10 @@ export function SecureVideoPlayer({ videoId, onExpired }: SecureVideoPlayerProps
       const msgTimer1 = setTimeout(() => setLoadingMsg("Confirming payment on IPFS..."), 4000);
       const msgTimer2 = setTimeout(() => setLoadingMsg("Almost there..."), 10000);
 
-      const res = await fetch(`/api/videos/${videoId}/play`);
+      const url = walletAddress
+        ? `/api/videos/${videoId}/play?wallet=${encodeURIComponent(walletAddress)}`
+        : `/api/videos/${videoId}/play`;
+      const res = await fetch(url);
       clearTimeout(msgTimer1);
       clearTimeout(msgTimer2);
 

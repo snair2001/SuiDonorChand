@@ -17,14 +17,19 @@ export async function GET(
       const { videoId } = await params;
       if (!videoId) return NextResponse.json({ error: "Video ID required" }, { status: 400 });
 
-      console.log(`[access] Checking access for videoId=${videoId}, addr=${user.suiAddress}, email=${user.email}`);
+      // Use the actual Slush wallet address if provided (it's the on-chain buyer key).
+      // Fall back to session suiAddress for backward compat.
+      const walletParam = req.nextUrl.searchParams.get("wallet");
+      const buyerAddress = walletParam || user.suiAddress;
+
+      console.log(`[access] Checking access for videoId=${videoId}, addr=${buyerAddress}, email=${user.email}`);
 
       const campaign = await getCampaignByVideoId(videoId);
       if (!campaign) {
         return NextResponse.json({ hasAccess: false, expiresAt: null, isExpired: false });
       }
 
-      const access = await checkOnChainAccess(campaign.campaignId, user.suiAddress);
+      const access = await checkOnChainAccess(campaign.campaignId, buyerAddress);
       const isExpired = access.expiresAt ? new Date(access.expiresAt).getTime() <= Date.now() : false;
 
       console.log(`[access] On-chain result:`, { ...access, isExpired });
