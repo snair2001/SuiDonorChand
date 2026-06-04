@@ -5,7 +5,7 @@ module private_tube::private_tube {
     use sui::tx_context::{Self, TxContext};
     use sui::event;
     use sui::object::{Self, UID};
-    use sui::dynamic_field as df;
+    use sui::dynamic_object_field as dof;
     use sui::vec_map::{Self, VecMap};
 
     const EInsufficientPayment: u64 = 1;
@@ -56,7 +56,8 @@ module private_tube::private_tube {
         total_gross_mist: u64,
     }
 
-    public struct AccessRecord has store, drop {
+    public struct AccessRecord has key, store {
+        id: UID,
         buyer: address,
         campaign_id: address,
         expiration_timestamp_ms: u64,
@@ -176,19 +177,20 @@ module private_tube::private_tube {
         let campaign_id = object::uid_to_address(&campaign.id);
         let buyer = tx_context::sender(ctx);
 
-        if (df::exists(&campaign.id, buyer)) {
+        if (dof::exists<address>(&campaign.id, buyer)) {
             // Update existing access record
-            let record: &mut AccessRecord = df::borrow_mut(&mut campaign.id, buyer);
+            let record: &mut AccessRecord = dof::borrow_mut(&mut campaign.id, buyer);
             record.expiration_timestamp_ms = expiration_timestamp_ms;
         } else {
             // Create new access record
             let access_record = AccessRecord {
+                id: object::new(ctx),
                 buyer,
                 campaign_id,
                 expiration_timestamp_ms,
             };
 
-            df::add(&mut campaign.id, buyer, access_record);
+            dof::add(&mut campaign.id, buyer, access_record);
         };
 
         event::emit(AccessPurchased {
@@ -298,8 +300,8 @@ module private_tube::private_tube {
         buyer: address,
         _ctx: &TxContext
     ): u64 {
-        if (df::exists(&campaign.id, buyer)) {
-            let record: &AccessRecord = df::borrow(&campaign.id, buyer);
+        if (dof::exists<address>(&campaign.id, buyer)) {
+            let record: &AccessRecord = dof::borrow(&campaign.id, buyer);
             record.expiration_timestamp_ms
         } else {
             0

@@ -206,10 +206,9 @@ export async function checkAccess(campaignId: string, buyerAddress: string): Pro
   try {
     console.log("[checkAccess] Checking access for:", { campaignId, buyerAddress });
 
-    // AccessRecord is stored as a plain dynamic_field (not dynamic_object_field)
-    // because AccessRecord has `store, drop` abilities (no `key`).
-    // We must use getDynamicFields to list fields and find the matching key,
-    // then read the value directly from the field's bcs/content.
+    // AccessRecord is stored as a dynamic_object_field (DOF) keyed by buyer address.
+    // getDynamicFields on the campaign returns the child object IDs directly.
+    // The objectId in each field entry IS the AccessRecord object itself.
     let cursor: string | undefined | null = undefined;
     let expiresAtMs: number | null = null;
 
@@ -232,23 +231,23 @@ export async function checkAccess(campaignId: string, buyerAddress: string): Pro
         const normalizedBuyer = buyerAddress.toLowerCase();
 
         if (normalizedKey === normalizedBuyer) {
-          // Found the field — now fetch its content to get expiration_timestamp_ms
-          const fieldObj = await suiClient.getObject({
+          // For dynamic_object_field, field.objectId is the AccessRecord object itself
+          const recordObj = await suiClient.getObject({
             id: field.objectId,
             options: { showContent: true },
           });
 
-          console.log("[checkAccess] Field object:", JSON.stringify(fieldObj, null, 2));
+          console.log("[checkAccess] AccessRecord object:", JSON.stringify(recordObj, null, 2));
 
-          const content = fieldObj.data?.content as any;
-          // Dynamic fields wrap value in fields.value
-          const valueFields =
-            content?.fields?.value?.fields ?? // wrapped object
-            content?.fields ?? // flat
+          const content = recordObj.data?.content as any;
+          // DOF: the record is a top-level object — fields are at content.fields
+          const fields =
+            content?.fields?.value?.fields ?? // DOF wrapper (some SDK versions)
+            content?.fields ??                // direct object
             null;
 
-          if (valueFields) {
-            expiresAtMs = Number(valueFields.expiration_timestamp_ms) || 0;
+          if (fields) {
+            expiresAtMs = Number(fields.expiration_timestamp_ms) || 0;
           }
           break;
         }
