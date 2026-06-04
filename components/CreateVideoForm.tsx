@@ -119,6 +119,15 @@ export function CreateVideoForm() {
         return;
       }
 
+      // Check one-active-campaign limit before doing anything
+      const checkRes = await fetch("/api/videos/create/check");
+      if (checkRes.status === 409) {
+        const data = await checkRes.json();
+        toast.error(data.error || "You already have an active campaign. Remove it from your dashboard first.");
+        setLoading(false);
+        return;
+      }
+
       // Encrypt YouTube URL on server
       const encryptRes = await fetch("/api/encrypt", {
         method: "POST",

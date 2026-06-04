@@ -27,6 +27,7 @@ export default function DashboardPage() {
   const [resetting, setResetting] = useState(false);
   const [grantingAccess, setGrantingAccess] = useState<string | null>(null);
   const [debugging, setDebugging] = useState(false);
+  const [removing, setRemoving] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/auth/session").then(r => r.json()).then(async data => {
@@ -101,8 +102,25 @@ export default function DashboardPage() {
     }
   };
 
-  const handleDebug = async () => {
-    if (!confirm("Run debug to check registry and latest video CID?")) {
+  const handleRemove = async (videoId: string, title: string) => {
+    if (!confirm(`Remove "${title}" from the marketplace? This cannot be undone.`)) return;
+    setRemoving(videoId);
+    try {
+      const res = await fetch(`/api/videos/${videoId}/remove`, { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        setVideos(prev => prev.filter(v => v.videoId !== videoId));
+      } else {
+        alert(data.error || "Failed to remove video");
+      }
+    } catch {
+      alert("Failed to remove video");
+    } finally {
+      setRemoving(null);
+    }
+  };
+
+  const handleDebug = async () => {    if (!confirm("Run debug to check registry and latest video CID?")) {
       return;
     }
     setDebugging(true);
@@ -279,6 +297,16 @@ export default function DashboardPage() {
                           <Link href={`/watch/${video.videoId}`} className="btn btn-outline btn-sm">
                             Watch Video
                           </Link>
+                          {!video.isDisabled && (
+                            <button
+                              onClick={() => handleRemove(video.videoId, video.title)}
+                              disabled={removing === video.videoId}
+                              className="btn btn-outline btn-sm"
+                              style={{ borderColor: "#f87171", color: "#f87171" }}
+                            >
+                              {removing === video.videoId ? "Removing..." : "🗑 Remove Video"}
+                            </button>
+                          )}
                         </div>
 
                         <p style={{ fontSize: "0.75rem", color: "#475569", marginTop: "0.5rem" }}>IPFS CID</p>

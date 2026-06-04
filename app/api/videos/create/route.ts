@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { validateCreateVideoInput } from "@/lib/validation";
 import { createVideo } from "@/lib/videoRegistry";
+import { getCampaigns } from "@/lib/sui-server";
 
 export async function POST(req: NextRequest) {
   return withAuth(req, async (user) => {
@@ -30,6 +31,23 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      // Enforce one active campaign per creator
+      const allCampaigns = await getCampaigns();
+      const creatorActive = allCampaigns.filter(
+        (c) =>
+          c.creatorAddress.toLowerCase() === user.suiAddress.toLowerCase() &&
+          !c.isDisabled
+      );
+      if (creatorActive.length > 0) {
+        return NextResponse.json(
+          {
+            error: "You already have an active campaign. Remove it before creating a new one.",
+            existingVideoId: creatorActive[0].videoId,
+          },
+          { status: 409 }
+        );
+      }
+
       // Create video with encrypted metadata
       const video = await createVideo({
         ...input,
@@ -37,17 +55,11 @@ export async function POST(req: NextRequest) {
         creatorAddress: user.suiAddress,
       });
 
-      return NextResponse.json({
-        success: true,
-        video,
-      });
+      return NextResponse.json({ success: true, video });
     } catch (err) {
       console.error("Create video error:", err);
       return NextResponse.json(
-        {
-          error:
-            err instanceof Error ? err.message : "Failed to create video",
-        },
+        { error: err instanceof Error ? err.message : "Failed to create video" },
         { status: 500 }
       );
     }
