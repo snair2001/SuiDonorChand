@@ -53,12 +53,14 @@ export default function MarketplacePage() {
     return "none";
   };
 
-  // Permanently hidden legacy test campaigns — new campaigns show automatically
+  // Permanently hidden campaigns
   const BLOCKED_VIDEO_IDS = new Set([
-    "95f75943-b013-41fe-9505-5e942fa97e0b", // yyyyyyyyyyy
-    "e62913dc-14e9-4e58-9d56-c61415331a0d", // ttttttttttttttttttttttttttt
-    "83c479b8-5da8-477e-93db-cb9bfedd8a26", // video
-    "3065057e-bf03-4429-9ccd-ed28fb7d4f75", // Globe
+    "95f75943-b013-41fe-9505-5e942fa97e0b",
+    "e62913dc-14e9-4e58-9d56-c61415331a0d",
+    "83c479b8-5da8-477e-93db-cb9bfedd8a26",
+    "3065057e-bf03-4429-9ccd-ed28fb7d4f75",
+    "202e629e-9c4a-4dee-bc42-8efa83feb64c",
+    "e83b111d-9f6f-4bb9-988c-3bbd1b184596",
   ]);
 
   const visible = campaigns.filter(v => !v.isDisabled && !BLOCKED_VIDEO_IDS.has(v.videoId));
